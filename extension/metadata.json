@@ -1,0 +1,8 @@
+{
+  "uuid": "fedora-audio-mixer@local",
+  "name": "Fedora Audio Mixer",
+  "description": "Quick Settings controls for master volume and active program audio streams.",
+  "shell-version": ["50"],
+  "url": "https://github.com/Abrenner-1/Fedora-Audio-Mixer",
+  "version": 1
+}
