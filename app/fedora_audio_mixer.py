@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
+import shlex
 import subprocess
 import sys
 import threading
@@ -79,6 +82,7 @@ class Sink:
 @dataclass(frozen=True)
 class Stream:
     index: int
+    keys: tuple[str, ...]
     name: str
     detail: str
     volume: float
@@ -87,10 +91,19 @@ class Stream:
 
 
 @dataclass(frozen=True)
+class OpenProgram:
+    key: str
+    keys: tuple[str, ...]
+    name: str
+    detail: str
+
+
+@dataclass(frozen=True)
 class AudioState:
     default_sink_name: str
     sinks: list[Sink]
     streams: list[Stream]
+    programs: list[OpenProgram]
 
 
 class PulseAudio:
@@ -148,6 +161,7 @@ class PulseAudio:
         streams = [
             Stream(
                 index=int(item.get("index", -1)),
+                keys=tuple(sorted(stream_keys(item))),
                 name=stream_name(item),
                 detail=stream_detail(item),
                 volume=volume_percent(item),
@@ -162,6 +176,7 @@ class PulseAudio:
             default_sink_name=default_sink_name,
             sinks=sinks,
             streams=streams,
+            programs=open_programs(streams),
         )
 
     def set_default_sink(self, sink_name: str) -> None:
@@ -236,6 +251,182 @@ def stream_detail(item: dict) -> str:
     return " / ".join(parts[:2])
 
 
+def normalize_program_key(value: object) -> str | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    text = os.path.basename(text)
+    if text.endswith(".desktop"):
+        text = text[: -len(".desktop")]
+    text = re.sub(r"[^a-z0-9]+", "", text)
+    return text or None
+
+
+def add_program_keys(keys: set[str], value: object) -> None:
+    if not value:
+        return
+
+    normalized = normalize_program_key(value)
+    if normalized:
+        keys.add(normalized)
+
+    for part in re.split(r"[.\-_\s/]+", str(value)):
+        part_key = normalize_program_key(part)
+        if part_key and len(part_key) > 2:
+            keys.add(part_key)
+
+
+def add_exact_program_key(keys: set[str], value: object) -> None:
+    key = normalize_program_key(value)
+    if key:
+        keys.add(key)
+
+
+def stream_keys(item: dict) -> set[str]:
+    props = item.get("properties") or {}
+    keys: set[str] = set()
+    for prop in (
+        "application.process.binary",
+        "application.name",
+        "application.id",
+        "media.name",
+        "node.name",
+        "pipewire.access.portal.app_id",
+    ):
+        add_program_keys(keys, props.get(prop))
+    return keys
+
+
+def running_process_keys() -> set[str]:
+    keys: set[str] = set()
+    uid = os.getuid()
+
+    try:
+        entries = list(os.scandir("/proc"))
+    except OSError:
+        return keys
+
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+
+        process_dir = entry.path
+        try:
+            if entry.stat(follow_symlinks=False).st_uid != uid:
+                continue
+        except OSError:
+            continue
+
+        for path in (
+            os.path.join(process_dir, "comm"),
+            os.path.join(process_dir, "exe"),
+        ):
+            try:
+                if path.endswith("/exe"):
+                    value = os.readlink(path)
+                else:
+                    with open(path) as handle:
+                        value = handle.read().strip()
+            except OSError:
+                continue
+            add_exact_program_key(keys, value)
+
+        try:
+            with open(os.path.join(process_dir, "cmdline"), "rb") as handle:
+                parts = [part.decode(errors="ignore") for part in handle.read().split(b"\0") if part]
+        except OSError:
+            parts = []
+
+        if parts:
+            add_exact_program_key(keys, parts[0])
+
+    return keys
+
+
+GENERIC_DESKTOP_EXEC_KEYS = {
+    "env",
+    "flatpak",
+    "gio",
+    "gtk-launch",
+    "sh",
+    "bash",
+    "python",
+    "python3",
+}
+
+
+def desktop_app_keys(app_info: Gio.AppInfo) -> set[str]:
+    keys: set[str] = set()
+    add_program_keys(keys, app_info.get_id())
+    add_program_keys(keys, app_info.get_name())
+
+    executable = app_info.get_executable()
+    executable_key = normalize_program_key(executable)
+    if executable_key and executable_key not in GENERIC_DESKTOP_EXEC_KEYS:
+        add_program_keys(keys, executable)
+
+    commandline = app_info.get_commandline() or ""
+    try:
+        command_parts = shlex.split(commandline)
+    except ValueError:
+        command_parts = commandline.split()
+
+    for part in command_parts:
+        if not part or part.startswith("%") or part.startswith("-"):
+            continue
+        part_key = normalize_program_key(part)
+        if not part_key or part_key in GENERIC_DESKTOP_EXEC_KEYS:
+            continue
+        add_program_keys(keys, part)
+
+    return keys
+
+
+def app_should_show(app_info: Gio.AppInfo) -> bool:
+    try:
+        return app_info.should_show()
+    except Exception:
+        return True
+
+
+def open_programs(streams: list[Stream]) -> list[OpenProgram]:
+    process_keys = running_process_keys()
+    if not process_keys:
+        return []
+
+    active_stream_keys = {key for stream in streams for key in stream.keys}
+    programs: list[OpenProgram] = []
+    seen_matches: set[str] = set()
+
+    for app_info in Gio.AppInfo.get_all():
+        app_id = app_info.get_id() or ""
+        if app_id == f"{APP_ID}.desktop" or not app_should_show(app_info):
+            continue
+
+        keys = desktop_app_keys(app_info)
+        matches = sorted(key for key in keys if key in process_keys)
+        if not matches or any(key in active_stream_keys for key in keys):
+            continue
+
+        identity = matches[0]
+        if identity in seen_matches:
+            continue
+        seen_matches.add(identity)
+
+        primary_key = normalize_program_key(app_id) or identity
+        programs.append(
+            OpenProgram(
+                key=primary_key,
+                keys=tuple(sorted(keys)),
+                name=app_info.get_name() or app_id.replace(".desktop", "") or "Open program",
+                detail="Open, waiting for audio",
+            )
+        )
+
+    programs.sort(key=lambda program: program.name.lower())
+    return programs
+
+
 class VolumeRow(Gtk.Box):
     def __init__(
         self,
@@ -243,8 +434,9 @@ class VolumeRow(Gtk.Box):
         detail: str,
         volume: float,
         muted: bool,
-        on_volume: Callable[[float], None],
-        on_mute: Callable[[bool], None],
+        on_volume: Callable[[float], None] | None,
+        on_mute: Callable[[bool], None] | None,
+        enabled: bool = True,
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.add_css_class("volume-row")
@@ -290,23 +482,36 @@ class VolumeRow(Gtk.Box):
 
         self._mute_handler = self.mute_button.connect("toggled", self._mute_toggled)
         self._volume_handler = self.scale.connect("value-changed", self._volume_changed)
-        self.update(title, detail, volume, muted)
+        self.update(title, detail, volume, muted, enabled=enabled)
 
-    def update(self, title: str, detail: str, volume: float, muted: bool) -> None:
+    def update(
+        self,
+        title: str,
+        detail: str,
+        volume: float,
+        muted: bool,
+        *,
+        enabled: bool = True,
+    ) -> None:
         self._updating = True
         try:
             self.title_label.set_label(title)
             self.detail_label.set_label(detail)
             self.detail_label.set_visible(bool(detail))
             self.scale.set_value(max(0, min(MAX_VOLUME, volume)))
+            self.scale.set_sensitive(enabled)
+            self.mute_button.set_sensitive(enabled)
             self.mute_button.set_active(muted)
             self._set_mute_icon(muted)
-            self._set_percent(volume)
+            self._set_percent(volume, enabled=enabled)
         finally:
             self._updating = False
 
-    def _set_percent(self, volume: float) -> None:
-        self.percent_label.set_label(f"{int(round(volume)):>3}%")
+    def _set_percent(self, volume: float, *, enabled: bool | None = None) -> None:
+        if enabled is None:
+            enabled = self.scale.get_sensitive()
+        label = f"{int(round(volume)):>3}%" if enabled else "Idle"
+        self.percent_label.set_label(label)
 
     def _set_mute_icon(self, muted: bool) -> None:
         icon = "audio-volume-muted-symbolic" if muted else "audio-volume-high-symbolic"
@@ -323,13 +528,14 @@ class VolumeRow(Gtk.Box):
 
     def _commit_volume(self) -> bool:
         self._volume_source = None
-        self.on_volume(self.scale.get_value())
+        if self.on_volume:
+            self.on_volume(self.scale.get_value())
         return False
 
     def _mute_toggled(self, button: Gtk.ToggleButton) -> None:
         muted = button.get_active()
         self._set_mute_icon(muted)
-        if not self._updating:
+        if not self._updating and self.on_mute:
             self.on_mute(muted)
 
 
@@ -340,7 +546,7 @@ class MixerWindow(Gtk.ApplicationWindow):
         self.last_state: AudioState | None = None
         self.refreshing = False
         self.master_row: VolumeRow | None = None
-        self.stream_rows: dict[int, VolumeRow] = {}
+        self.stream_rows: dict[str, VolumeRow] = {}
         self.sink_names: list[str] = []
 
         self.set_title(APP_NAME)
@@ -392,7 +598,7 @@ class MixerWindow(Gtk.ApplicationWindow):
         self.streams_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         scroll.set_child(self.streams_box)
 
-        self.empty_label = Gtk.Label(label="No active program audio")
+        self.empty_label = Gtk.Label(label="No open programs")
         self.empty_label.add_css_class("empty-state")
         self.streams_box.append(self.empty_label)
 
@@ -482,16 +688,25 @@ class MixerWindow(Gtk.ApplicationWindow):
             self.master_row.update(sink.description, sink.state.title(), sink.volume, sink.muted)
 
     def _sync_streams(self, state: AudioState) -> None:
-        active_indexes = {stream.index for stream in state.streams}
-        for index in list(self.stream_rows):
-            if index not in active_indexes:
-                self.streams_box.remove(self.stream_rows[index])
-                del self.stream_rows[index]
+        desired_keys = {f"stream:{stream.index}" for stream in state.streams}
+        active_stream_keys = {key for stream in state.streams for key in stream.keys}
+        waiting_programs = [
+            program
+            for program in state.programs
+            if not any(key in active_stream_keys for key in program.keys)
+        ]
+        desired_keys.update(f"program:{program.key}" for program in waiting_programs)
 
-        self.empty_label.set_visible(not state.streams)
+        for key in list(self.stream_rows):
+            if key not in desired_keys:
+                self.streams_box.remove(self.stream_rows[key])
+                del self.stream_rows[key]
+
+        self.empty_label.set_visible(not desired_keys)
 
         for stream in state.streams:
-            row = self.stream_rows.get(stream.index)
+            row_key = f"stream:{stream.index}"
+            row = self.stream_rows.get(row_key)
             if row is None:
                 row = VolumeRow(
                     stream.name,
@@ -505,10 +720,28 @@ class MixerWindow(Gtk.ApplicationWindow):
                         stream_index, muted
                     ),
                 )
-                self.stream_rows[stream.index] = row
+                self.stream_rows[row_key] = row
                 self.streams_box.append(row)
             else:
                 row.update(stream.name, stream.detail, stream.volume, stream.muted)
+
+        for program in waiting_programs:
+            row_key = f"program:{program.key}"
+            row = self.stream_rows.get(row_key)
+            if row is None:
+                row = VolumeRow(
+                    program.name,
+                    program.detail,
+                    0,
+                    False,
+                    None,
+                    None,
+                    enabled=False,
+                )
+                self.stream_rows[row_key] = row
+                self.streams_box.append(row)
+            else:
+                row.update(program.name, program.detail, 0, False, enabled=False)
 
     def _run_audio_command(
         self,
@@ -629,6 +862,9 @@ def print_check() -> int:
     for stream in state.streams:
         muted = " muted" if stream.muted else ""
         print(f"- {stream.name}: {int(round(stream.volume))}%{muted}")
+    print(f"Open programs waiting for audio: {len(state.programs)}")
+    for program in state.programs:
+        print(f"- {program.name}: waiting for audio")
     return 0
 
 
