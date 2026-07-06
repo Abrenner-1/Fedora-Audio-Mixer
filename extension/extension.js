@@ -62,6 +62,59 @@ function appInfoForStream(stream) {
         appSystem.lookup_app(`${appId}.desktop`);
 }
 
+function normalizeProgramKey(value) {
+    if (!value)
+        return null;
+
+    let text = String(value).trim().toLowerCase();
+    if (!text)
+        return null;
+
+    text = text.split('/').at(-1);
+    if (text.endsWith('.desktop'))
+        text = text.slice(0, -'.desktop'.length);
+
+    text = text.replace(/[^a-z0-9]+/g, '');
+    return text || null;
+}
+
+function addProgramKeys(keys, value) {
+    if (!value)
+        return;
+
+    const normalized = normalizeProgramKey(value);
+    if (normalized)
+        keys.add(normalized);
+
+    for (const part of String(value).split(/[.\-_\s/]+/)) {
+        const partKey = normalizeProgramKey(part);
+        if (partKey && partKey.length > 2)
+            keys.add(partKey);
+    }
+}
+
+function appKeys(app) {
+    const keys = new Set();
+    addProgramKeys(keys, app.get_id?.());
+    addProgramKeys(keys, app.get_name?.());
+    addProgramKeys(keys, app.get_app_info?.()?.get_executable?.());
+    return keys;
+}
+
+function streamKeys(stream) {
+    const keys = new Set();
+    const app = appInfoForStream(stream);
+    if (app) {
+        for (const key of appKeys(app))
+            keys.add(key);
+    }
+
+    addProgramKeys(keys, stream.get_application_id?.());
+    addProgramKeys(keys, stream.get_name?.());
+    addProgramKeys(keys, stream.get_description?.());
+    return keys;
+}
+
 function streamFlag(stream, name) {
     const value = stream[name];
 
@@ -208,6 +261,74 @@ class VolumeSliderItem extends GObject.Object {
     }
 });
 
+const WaitingAppItem = GObject.registerClass(
+class WaitingAppItem extends GObject.Object {
+    _init(app) {
+        super._init();
+
+        this._item = new PopupMenu.PopupBaseMenuItem({
+            reactive: false,
+            can_focus: false,
+        });
+        this._item.add_style_class_name('fedora-audio-mixer-item');
+        this._item.add_style_class_name('fedora-audio-mixer-waiting-item');
+
+        const row = new St.BoxLayout({
+            style_class: 'fedora-audio-mixer-header',
+            x_expand: true,
+        });
+        this._item.add_child(row);
+
+        let icon = null;
+        if (typeof app.create_icon_texture === 'function')
+            icon = app.create_icon_texture(16);
+        if (!icon) {
+            icon = new St.Icon({
+                icon_name: 'application-x-executable-symbolic',
+                style_class: 'popup-menu-icon',
+            });
+        }
+        icon.add_style_class_name?.('popup-menu-icon');
+        row.add_child(icon);
+
+        const labelBox = new St.BoxLayout({
+            vertical: true,
+            x_expand: true,
+        });
+        row.add_child(labelBox);
+
+        this._titleLabel = new St.Label({
+            text: app.get_name?.() || 'Open program',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._titleLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        labelBox.add_child(this._titleLabel);
+
+        this._detailLabel = new St.Label({
+            text: 'Open, waiting for audio',
+            style_class: 'fedora-audio-mixer-waiting-detail',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._detailLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        labelBox.add_child(this._detailLabel);
+
+        this._statusLabel = new St.Label({
+            text: 'Idle',
+            style_class: 'fedora-audio-mixer-percent fedora-audio-mixer-waiting-status',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        row.add_child(this._statusLabel);
+    }
+
+    addToMenu(menu) {
+        menu.addMenuItem(this._item);
+    }
+
+    destroy() {
+        this._item.destroy();
+    }
+});
+
 const MixerMenuToggle = GObject.registerClass(
 class MixerMenuToggle extends QuickSettings.QuickMenuToggle {
     _init() {
@@ -218,7 +339,10 @@ class MixerMenuToggle extends QuickSettings.QuickMenuToggle {
         });
 
         this._control = new Gvc.MixerControl({name: 'Fedora Audio Mixer'});
+        this._appSystem = Shell.AppSystem.get_default();
         this._controlSignals = [];
+        this._appSystemSignals = [];
+        this._menuSignals = [];
         this._items = [];
         this._ready = false;
 
@@ -232,6 +356,21 @@ class MixerMenuToggle extends QuickSettings.QuickMenuToggle {
             'default-sink-changed',
         ]) {
             this._controlSignals.push(this._control.connect(signal, () => this.refresh()));
+        }
+
+        try {
+            this._appSystemSignals.push(this._appSystem.connect('app-state-changed', () => {
+                this.refresh();
+            }));
+        } catch (_error) {
+        }
+
+        try {
+            this._menuSignals.push(this.menu.connect('open-state-changed', (_menu, open) => {
+                if (open)
+                    this.refresh();
+            }));
+        } catch (_error) {
         }
 
         this._control.open();
@@ -263,17 +402,22 @@ class MixerMenuToggle extends QuickSettings.QuickMenuToggle {
         }
 
         const streams = this._getProgramStreams();
-        this.subtitle = streams.length === 1
-            ? '1 program'
-            : `${streams.length} programs`;
+        const waitingApps = this._getWaitingApps(streams);
+        const programCount = streams.length + waitingApps.length;
 
-        if (streams.length === 0) {
-            this.menu.addMenuItem(new PopupMenu.PopupMenuItem('No active program audio', {
+        this.subtitle = programCount === 1
+            ? '1 program'
+            : `${programCount} programs`;
+
+        if (programCount === 0) {
+            this.menu.addMenuItem(new PopupMenu.PopupMenuItem('No open programs', {
                 reactive: false,
             }));
         } else {
             for (const stream of streams)
                 this._addTrackedItem(new VolumeSliderItem(stream, this._control));
+            for (const app of waitingApps)
+                this._addTrackedItem(new WaitingAppItem(app));
         }
 
         this._addFullMixerShortcut();
@@ -284,6 +428,26 @@ class MixerMenuToggle extends QuickSettings.QuickMenuToggle {
             .filter(stream => !streamFlag(stream, 'is_event_stream'))
             .filter(stream => !streamFlag(stream, 'is_virtual'))
             .sort((a, b) => streamName(a).localeCompare(streamName(b)));
+    }
+
+    _getWaitingApps(streams) {
+        const activeKeys = new Set();
+        for (const stream of streams) {
+            for (const key of streamKeys(stream))
+                activeKeys.add(key);
+        }
+
+        const runningApps = this._appSystem.get_running?.() ?? [];
+        return runningApps
+            .filter(app => app.get_id?.() !== APP_DESKTOP_ID)
+            .filter(app => {
+                for (const key of appKeys(app)) {
+                    if (activeKeys.has(key))
+                        return false;
+                }
+                return true;
+            })
+            .sort((a, b) => (a.get_name?.() || '').localeCompare(b.get_name?.() || ''));
     }
 
     _addTrackedItem(item) {
@@ -315,10 +479,15 @@ class MixerMenuToggle extends QuickSettings.QuickMenuToggle {
 
     destroy() {
         disconnectSignals(this._control, this._controlSignals);
+        disconnectSignals(this._appSystem, this._appSystemSignals);
+        disconnectSignals(this.menu, this._menuSignals);
         this._controlSignals = [];
+        this._appSystemSignals = [];
+        this._menuSignals = [];
         this._clearMenu();
         this._control.close();
         this._control = null;
+        this._appSystem = null;
         super.destroy();
     }
 });

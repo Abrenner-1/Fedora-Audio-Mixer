@@ -17,6 +17,19 @@
   padding-bottom: 8px;
 }
 
+.fedora-audio-mixer-waiting-item {
+  color: #c8c8c8;
+}
+
+.fedora-audio-mixer-waiting-detail {
+  color: #a8a8a8;
+  font-size: 11px;
+}
+
+.fedora-audio-mixer-waiting-status {
+  color: #a8a8a8;
+}
+
 .fedora-audio-mixer-percent {
   min-width: 44px;
   text-align: right;

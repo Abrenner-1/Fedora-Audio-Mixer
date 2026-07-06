@@ -7,13 +7,14 @@ It is built for Fedora systems using PipeWire through PulseAudio compatibility.
 ## Features
 
 - Master output volume and mute
-- Active program volume and mute
+- Open program list, including apps that are open but silent
+- Program volume and mute once the app has an audio stream
 - GNOME Quick Settings **Mixer** tile
 - Full GTK mixer app for a larger view
 - One install script for both interfaces
 - One uninstall script to remove everything it installs
 
-Programs appear when they have an active audio stream. That is how GNOME, PipeWire, and PulseAudio expose per-program volume.
+Apps that are open but not currently making sound are shown as idle/waiting. Linux only exposes a real per-program volume control after an app creates an audio stream, so the slider appears once that program starts playing audio.
 
 ## Screenshots
 
