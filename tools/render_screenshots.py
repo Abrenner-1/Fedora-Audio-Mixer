@@ -497,9 +497,23 @@ def render_html(name: str, html: str, size: tuple[int, int]) -> None:
         )
 
 
+def render_webp(name: str) -> None:
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise SystemExit("Pillow is required to write WebP screenshots") from exc
+
+    png_path = OUT / f"{name}.png"
+    webp_path = OUT / f"{name}.webp"
+    with Image.open(png_path) as image:
+        image.convert("RGB").save(webp_path, "WEBP", quality=92, method=6)
+
+
 def main() -> None:
     render_html("desktop-app", APP_HTML, (1440, 940))
     render_html("quick-settings", QUICK_SETTINGS_HTML, (1080, 900))
+    render_webp("desktop-app")
+    render_webp("quick-settings")
     print(f"Rendered screenshots in {OUT}")
 
 

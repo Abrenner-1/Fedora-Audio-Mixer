@@ -17,9 +17,9 @@ Programs appear when they have an active audio stream. That is how GNOME, PipeWi
 
 ## Screenshots
 
-![Fedora Audio Mixer desktop app](screenshots/desktop-app.png)
+![Fedora Audio Mixer desktop app](screenshots/desktop-app.webp)
 
-![Fedora Audio Mixer Quick Settings tile](screenshots/quick-settings.png)
+![Fedora Audio Mixer Quick Settings tile](screenshots/quick-settings.webp)
 
 ## Requirements
 
