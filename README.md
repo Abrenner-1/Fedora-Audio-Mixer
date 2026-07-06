@@ -15,6 +15,12 @@ It is built for Fedora systems using PipeWire through PulseAudio compatibility.
 
 Programs appear when they have an active audio stream. That is how GNOME, PipeWire, and PulseAudio expose per-program volume.
 
+## Screenshots
+
+![Fedora Audio Mixer desktop app](screenshots/desktop-app.png)
+
+![Fedora Audio Mixer Quick Settings tile](screenshots/quick-settings.png)
+
 ## Requirements
 
 - Fedora GNOME
@@ -60,6 +66,12 @@ Create a single zip download:
 ```
 
 The output is `fedora-audio-mixer.zip` next to this folder.
+
+Regenerate the README screenshots:
+
+```bash
+python3 tools/render_screenshots.py
+```
 
 ## Uninstall
 
