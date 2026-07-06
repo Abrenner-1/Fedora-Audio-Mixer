@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+*.shell-extension.zip
+*.zip
+*.log
+.DS_Store
+.idea/
+.vscode/
