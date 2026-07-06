@@ -63,6 +63,15 @@ function appInfoForStream(stream) {
         appSystem.lookup_app(`${appId}.desktop`);
 }
 
+function streamFlag(stream, name) {
+    const value = stream[name];
+
+    if (typeof value === 'function')
+        return value.call(stream);
+
+    return Boolean(value);
+}
+
 const VolumeSliderItem = GObject.registerClass(
 class VolumeSliderItem extends PopupMenu.PopupBaseMenuItem {
     _init(stream, control, options = {}) {
@@ -357,8 +366,8 @@ class MixerMenuToggle extends QuickSettings.QuickMenuToggle {
 
     _getProgramStreams() {
         return (this._control.get_sink_inputs() ?? [])
-            .filter(stream => !stream.is_event_stream?.())
-            .filter(stream => !stream.is_virtual?.())
+            .filter(stream => !streamFlag(stream, 'is_event_stream'))
+            .filter(stream => !streamFlag(stream, 'is_virtual'))
             .sort((a, b) => streamName(a).localeCompare(streamName(b)));
     }
 
