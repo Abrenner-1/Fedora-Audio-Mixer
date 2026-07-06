@@ -1,0 +1,24 @@
+.fedora-audio-mixer-item {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.fedora-audio-mixer-header {
+  spacing: 8px;
+}
+
+.fedora-audio-mixer-controls {
+  spacing: 10px;
+  padding-top: 6px;
+}
+
+.fedora-audio-mixer-percent {
+  min-width: 44px;
+  text-align: right;
+}
+
+.fedora-audio-mixer-mute-button {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 4px;
+}
