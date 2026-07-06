@@ -12,6 +12,11 @@
   padding-top: 6px;
 }
 
+.fedora-audio-mixer-slider-item {
+  padding-top: 0;
+  padding-bottom: 8px;
+}
+
 .fedora-audio-mixer-percent {
   min-width: 44px;
   text-align: right;

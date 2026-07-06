@@ -10,7 +10,6 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as QuickSettings from 'resource:///org/gnome/shell/ui/quickSettings.js';
-import * as Slider from 'resource:///org/gnome/shell/ui/slider.js';
 
 const APP_DESKTOP_ID = 'dev.local.FedoraAudioMixer.desktop';
 const MAX_AMPLIFIED_FALLBACK = 1.5;
@@ -73,20 +72,15 @@ function streamFlag(stream, name) {
 }
 
 const VolumeSliderItem = GObject.registerClass(
-class VolumeSliderItem extends PopupMenu.PopupBaseMenuItem {
+class VolumeSliderItem extends GObject.Object {
     _init(stream, control, options = {}) {
-        super._init({
-            activate: false,
-            can_focus: false,
-        });
+        super._init();
 
         this._stream = stream;
         this._control = control;
         this._isMaster = options.isMaster ?? false;
         this._signalIds = [];
         this._updating = false;
-        this._sliderDragging = false;
-        this._stageDragSignalId = 0;
         this._normalVolume = Math.max(this._control.get_vol_max_norm?.() || 65536, 1);
         this._maxVolume = Math.max(
             this._control.get_vol_max_amplified?.() || 0,
@@ -95,19 +89,17 @@ class VolumeSliderItem extends PopupMenu.PopupBaseMenuItem {
             this._normalVolume
         );
 
-        this.add_style_class_name('fedora-audio-mixer-item');
-
-        const row = new St.BoxLayout({
-            vertical: true,
-            x_expand: true,
+        this._headerItem = new PopupMenu.PopupBaseMenuItem({
+            activate: false,
+            can_focus: false,
         });
-        this.add_child(row);
+        this._headerItem.add_style_class_name('fedora-audio-mixer-item');
 
         const header = new St.BoxLayout({
             style_class: 'fedora-audio-mixer-header',
             x_expand: true,
         });
-        row.add_child(header);
+        this._headerItem.add_child(header);
 
         this._icon = new St.Icon({
             icon_name: options.iconName || streamIconName(stream),
@@ -129,12 +121,6 @@ class VolumeSliderItem extends PopupMenu.PopupBaseMenuItem {
         });
         header.add_child(this._percentLabel);
 
-        const controls = new St.BoxLayout({
-            style_class: 'fedora-audio-mixer-controls',
-            x_expand: true,
-        });
-        row.add_child(controls);
-
         this._muteIcon = new St.Icon({
             icon_name: 'audio-volume-high-symbolic',
             style_class: 'popup-menu-icon',
@@ -146,30 +132,24 @@ class VolumeSliderItem extends PopupMenu.PopupBaseMenuItem {
             track_hover: true,
             style_class: 'button fedora-audio-mixer-mute-button',
         });
-        controls.add_child(this._muteButton);
-
-        this._slider = new Slider.Slider(0);
-        this._slider.x_expand = true;
-        controls.add_child(this._slider);
+        header.add_child(this._muteButton);
 
         this._muteButton.connect('clicked', () => {
             this._stream.change_is_muted(!this._stream.get_is_muted());
         });
 
-        this._slider.connect('notify::value', () => {
-            if (this._updating)
-                return;
-
-            const volume = Math.round(this._slider.value * this._maxVolume);
-            this._stream.set_volume(volume);
-            this._stream.push_volume();
-            this._updatePercent();
-        });
-
-        this._slider.connect('button-press-event', (_actor, event) =>
-            this._startSliderDrag(event));
-        this._slider.connect('touch-event', (_actor, event) =>
-            this._handleSliderTouchEvent(event));
+        this._sliderItem = new PopupMenu.PopupSliderMenuItem(0);
+        this._sliderItem.add_style_class_name('fedora-audio-mixer-slider-item');
+        this._slider = this._sliderItem._slider ?? null;
+        if (this._slider) {
+            this._slider.connect('notify::value', () => {
+                this._sliderChanged(this._slider.value);
+            });
+        } else {
+            this._sliderItem.connect('value-changed', (_item, value) => {
+                this._sliderChanged(value);
+            });
+        }
 
         for (const signal of ['notify::volume', 'notify::is-muted'])
             this._signalIds.push(this._stream.connect(signal, () => this.sync()));
@@ -177,16 +157,18 @@ class VolumeSliderItem extends PopupMenu.PopupBaseMenuItem {
         this.sync();
     }
 
-    sync() {
-        if (this._sliderDragging)
-            return;
+    addToMenu(menu) {
+        menu.addMenuItem(this._headerItem);
+        menu.addMenuItem(this._sliderItem);
+    }
 
+    sync() {
         this._updating = true;
         try {
             const volume = this._stream.get_volume();
             const muted = this._stream.get_is_muted();
             this._maxVolume = Math.max(this._maxVolume, volume, this._normalVolume);
-            this._slider.value = clamp(volume / this._maxVolume, 0, 1);
+            this._setSliderValue(clamp(volume / this._maxVolume, 0, 1));
             this._muteIcon.icon_name = muted
                 ? 'audio-volume-muted-symbolic'
                 : streamIconName(this._stream);
@@ -196,100 +178,33 @@ class VolumeSliderItem extends PopupMenu.PopupBaseMenuItem {
         }
     }
 
+    _sliderChanged(value) {
+        if (this._updating)
+            return;
+
+        const volume = Math.round(value * this._maxVolume);
+        this._stream.set_volume(volume);
+        this._stream.push_volume();
+        this._updatePercent();
+    }
+
+    _setSliderValue(value) {
+        if (this._slider)
+            this._slider.value = value;
+        else
+            this._sliderItem.value = value;
+    }
+
     _updatePercent() {
         const percent = Math.round(this._stream.get_volume() / this._normalVolume * 100);
         this._percentLabel.text = `${percent}%`;
     }
 
-    _startSliderDrag(event) {
-        if (event.get_button() !== Clutter.BUTTON_PRIMARY)
-            return Clutter.EVENT_PROPAGATE;
-
-        this._sliderDragging = true;
-        this._connectStageDrag();
-        this._setSliderFromEvent(event);
-        return Clutter.EVENT_STOP;
-    }
-
-    _handleSliderTouchEvent(event) {
-        switch (event.type()) {
-        case Clutter.EventType.TOUCH_BEGIN:
-            this._sliderDragging = true;
-            this._connectStageDrag();
-            this._setSliderFromEvent(event);
-            return Clutter.EVENT_STOP;
-
-        default:
-            return this._handleStageDragEvent(event);
-        }
-    }
-
-    _connectStageDrag() {
-        if (this._stageDragSignalId)
-            return;
-
-        this._stageDragSignalId = global.stage.connect('captured-event', (_stage, event) =>
-            this._handleStageDragEvent(event));
-    }
-
-    _handleStageDragEvent(event) {
-        if (!this._sliderDragging)
-            return Clutter.EVENT_PROPAGATE;
-
-        switch (event.type()) {
-        case Clutter.EventType.MOTION:
-        case Clutter.EventType.TOUCH_UPDATE:
-            this._setSliderFromEvent(event);
-            return Clutter.EVENT_STOP;
-
-        case Clutter.EventType.BUTTON_RELEASE:
-            this._setSliderFromEvent(event);
-            this._stopSliderDrag();
-            return Clutter.EVENT_STOP;
-
-        case Clutter.EventType.TOUCH_END:
-        case Clutter.EventType.TOUCH_CANCEL:
-            this._setSliderFromEvent(event);
-            this._stopSliderDrag();
-            return Clutter.EVENT_STOP;
-
-        default:
-            return Clutter.EVENT_PROPAGATE;
-        }
-    }
-
-    _setSliderFromEvent(event) {
-        const [stageX, stageY] = event.get_coords();
-        const [success, sliderX] = this._slider.transform_stage_point(stageX, stageY);
-
-        if (!success || this._slider.width <= 0)
-            return;
-
-        let value = clamp(sliderX / this._slider.width, 0, 1);
-        if (this._slider.get_text_direction() === Clutter.TextDirection.RTL)
-            value = 1 - value;
-
-        this._slider.value = value;
-    }
-
-    _stopSliderDrag(sync = true) {
-        const wasDragging = this._sliderDragging;
-        this._sliderDragging = false;
-
-        if (this._stageDragSignalId) {
-            global.stage.disconnect(this._stageDragSignalId);
-            this._stageDragSignalId = 0;
-        }
-
-        if (wasDragging && sync)
-            this.sync();
-    }
-
     destroy() {
-        this._stopSliderDrag(false);
         disconnectSignals(this._stream, this._signalIds);
         this._signalIds = [];
-        super.destroy();
+        this._headerItem.destroy();
+        this._sliderItem.destroy();
     }
 });
 
@@ -373,7 +288,7 @@ class MixerMenuToggle extends QuickSettings.QuickMenuToggle {
 
     _addTrackedItem(item) {
         this._items.push(item);
-        this.menu.addMenuItem(item);
+        item.addToMenu(this.menu);
     }
 
     _addFullMixerShortcut() {
@@ -391,6 +306,8 @@ class MixerMenuToggle extends QuickSettings.QuickMenuToggle {
     }
 
     _clearMenu() {
+        for (const item of this._items)
+            item.destroy();
         this._items = [];
         this.menu.removeAll();
         this.menu.setHeader('audio-volume-high-symbolic', 'Audio Mixer', 'Master and programs');
