@@ -16,6 +16,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "screenshots"
+WEBP_WIDTHS = {
+    "desktop-app": 1200,
+    "quick-settings": 960,
+}
 
 
 BASE_CSS = """
@@ -506,7 +510,12 @@ def render_webp(name: str) -> None:
     png_path = OUT / f"{name}.png"
     webp_path = OUT / f"{name}.webp"
     with Image.open(png_path) as image:
-        image.convert("RGB").save(webp_path, "WEBP", quality=92, method=6)
+        image = image.convert("RGB")
+        max_width = WEBP_WIDTHS[name]
+        if image.width > max_width:
+            height = round(image.height * max_width / image.width)
+            image = image.resize((max_width, height), Image.Resampling.LANCZOS)
+        image.save(webp_path, "WEBP", quality=92, method=6)
 
 
 def main() -> None:
