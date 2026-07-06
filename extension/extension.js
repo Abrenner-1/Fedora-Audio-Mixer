@@ -76,6 +76,8 @@ class VolumeSliderItem extends PopupMenu.PopupBaseMenuItem {
         this._isMaster = options.isMaster ?? false;
         this._signalIds = [];
         this._updating = false;
+        this._sliderDragging = false;
+        this._sliderDragGrab = null;
         this._normalVolume = Math.max(this._control.get_vol_max_norm?.() || 65536, 1);
         this._maxVolume = Math.max(
             this._control.get_vol_max_amplified?.() || 0,
@@ -155,6 +157,9 @@ class VolumeSliderItem extends PopupMenu.PopupBaseMenuItem {
             this._updatePercent();
         });
 
+        this._slider.connect('captured-event', (_actor, event) =>
+            this._handleSliderEvent(event));
+
         for (const signal of ['notify::volume', 'notify::is-muted'])
             this._signalIds.push(this._stream.connect(signal, () => this.sync()));
 
@@ -162,6 +167,9 @@ class VolumeSliderItem extends PopupMenu.PopupBaseMenuItem {
     }
 
     sync() {
+        if (this._sliderDragging)
+            return;
+
         this._updating = true;
         try {
             const volume = this._stream.get_volume();
@@ -182,7 +190,87 @@ class VolumeSliderItem extends PopupMenu.PopupBaseMenuItem {
         this._percentLabel.text = `${percent}%`;
     }
 
+    _handleSliderEvent(event) {
+        switch (event.type()) {
+        case Clutter.EventType.BUTTON_PRESS:
+            if (event.get_button() !== Clutter.BUTTON_PRIMARY)
+                return Clutter.EVENT_PROPAGATE;
+
+            this._sliderDragging = true;
+            this._sliderDragGrab?.dismiss();
+            this._sliderDragGrab = global.stage.grab(this._slider);
+            this._setSliderFromEvent(event);
+            return Clutter.EVENT_STOP;
+
+        case Clutter.EventType.MOTION:
+            if (!this._sliderDragging)
+                return Clutter.EVENT_PROPAGATE;
+
+            this._setSliderFromEvent(event);
+            return Clutter.EVENT_STOP;
+
+        case Clutter.EventType.BUTTON_RELEASE:
+            if (!this._sliderDragging)
+                return Clutter.EVENT_PROPAGATE;
+
+            this._setSliderFromEvent(event);
+            this._stopSliderDrag();
+            return Clutter.EVENT_STOP;
+
+        case Clutter.EventType.TOUCH_BEGIN:
+            this._sliderDragging = true;
+            this._sliderDragGrab?.dismiss();
+            this._sliderDragGrab = global.stage.grab(this._slider);
+            this._setSliderFromEvent(event);
+            return Clutter.EVENT_STOP;
+
+        case Clutter.EventType.TOUCH_UPDATE:
+            if (!this._sliderDragging)
+                return Clutter.EVENT_PROPAGATE;
+
+            this._setSliderFromEvent(event);
+            return Clutter.EVENT_STOP;
+
+        case Clutter.EventType.TOUCH_END:
+        case Clutter.EventType.TOUCH_CANCEL:
+            if (!this._sliderDragging)
+                return Clutter.EVENT_PROPAGATE;
+
+            this._setSliderFromEvent(event);
+            this._stopSliderDrag();
+            return Clutter.EVENT_STOP;
+
+        default:
+            return Clutter.EVENT_PROPAGATE;
+        }
+    }
+
+    _setSliderFromEvent(event) {
+        const [stageX, stageY] = event.get_coords();
+        const [success, sliderX] = this._slider.transform_stage_point(stageX, stageY);
+
+        if (!success || this._slider.width <= 0)
+            return;
+
+        let value = clamp(sliderX / this._slider.width, 0, 1);
+        if (this._slider.get_text_direction() === Clutter.TextDirection.RTL)
+            value = 1 - value;
+
+        this._slider.value = value;
+    }
+
+    _stopSliderDrag(sync = true) {
+        const wasDragging = this._sliderDragging;
+        this._sliderDragging = false;
+        this._sliderDragGrab?.dismiss();
+        this._sliderDragGrab = null;
+
+        if (wasDragging && sync)
+            this.sync();
+    }
+
     destroy() {
+        this._stopSliderDrag(false);
         disconnectSignals(this._stream, this._signalIds);
         this._signalIds = [];
         super.destroy();
