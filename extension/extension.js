@@ -10,6 +10,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as QuickSettings from 'resource:///org/gnome/shell/ui/quickSettings.js';
+import * as Slider from 'resource:///org/gnome/shell/ui/slider.js';
 
 const APP_DESKTOP_ID = 'dev.local.FedoraAudioMixer.desktop';
 const MAX_AMPLIFIED_FALLBACK = 1.5;
@@ -191,18 +192,27 @@ class VolumeSliderItem extends GObject.Object {
             this._stream.change_is_muted(!this._stream.get_is_muted());
         });
 
-        this._sliderItem = new PopupMenu.PopupSliderMenuItem(0);
+        this._sliderItem = new PopupMenu.PopupBaseMenuItem({
+            activate: false,
+            can_focus: false,
+        });
         this._sliderItem.add_style_class_name('fedora-audio-mixer-slider-item');
-        this._slider = this._sliderItem._slider ?? null;
-        if (this._slider) {
-            this._slider.connect('notify::value', () => {
-                this._sliderChanged(this._slider.value);
-            });
-        } else {
-            this._sliderItem.connect('value-changed', (_item, value) => {
-                this._sliderChanged(value);
-            });
-        }
+
+        this._slider = new Slider.Slider(0);
+        this._slider.x_expand = true;
+        this._slider.connect('notify::value', () => {
+            this._sliderChanged(this._slider.value);
+        });
+
+        const sliderBin = new St.Bin({
+            child: this._slider,
+            reactive: true,
+            can_focus: true,
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        sliderBin.connect('event', (_bin, event) => this._slider.event(event, false));
+        this._sliderItem.add_child(sliderBin);
 
         for (const signal of ['notify::volume', 'notify::is-muted'])
             this._signalIds.push(this._stream.connect(signal, () => this.sync()));
@@ -242,10 +252,7 @@ class VolumeSliderItem extends GObject.Object {
     }
 
     _setSliderValue(value) {
-        if (this._slider)
-            this._slider.value = value;
-        else
-            this._sliderItem.value = value;
+        this._slider.value = value;
     }
 
     _updatePercent() {
