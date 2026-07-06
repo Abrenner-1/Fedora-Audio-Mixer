@@ -77,6 +77,10 @@ import subprocess
 import sys
 
 uuid = sys.argv[1]
+legacy_uuids = {
+    "ok_mixer@enklht.github.io",
+    "midi-mixer-panel@regi",
+}
 raw = subprocess.check_output(
     ["gsettings", "get", "org.gnome.shell", "enabled-extensions"],
     text=True,
@@ -87,12 +91,13 @@ if raw == "@as []":
 else:
     enabled = ast.literal_eval(raw)
 
-if uuid not in enabled:
-    enabled.append(uuid)
-    subprocess.run(
-        ["gsettings", "set", "org.gnome.shell", "enabled-extensions", repr(enabled)],
-        check=True,
-    )
+enabled = [item for item in enabled if item not in legacy_uuids and item != uuid]
+enabled.append(uuid)
+
+subprocess.run(
+    ["gsettings", "set", "org.gnome.shell", "enabled-extensions", repr(enabled)],
+    check=True,
+)
 PY
 
 gnome-extensions enable "$EXT_UUID" >/dev/null 2>&1 || true
