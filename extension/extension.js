@@ -77,7 +77,7 @@ class VolumeSliderItem extends PopupMenu.PopupBaseMenuItem {
         this._signalIds = [];
         this._updating = false;
         this._sliderDragging = false;
-        this._sliderDragGrab = null;
+        this._stageDragSignalId = 0;
         this._normalVolume = Math.max(this._control.get_vol_max_norm?.() || 65536, 1);
         this._maxVolume = Math.max(
             this._control.get_vol_max_amplified?.() || 0,
@@ -157,8 +157,10 @@ class VolumeSliderItem extends PopupMenu.PopupBaseMenuItem {
             this._updatePercent();
         });
 
-        this._slider.connect('captured-event', (_actor, event) =>
-            this._handleSliderEvent(event));
+        this._slider.connect('button-press-event', (_actor, event) =>
+            this._startSliderDrag(event));
+        this._slider.connect('touch-event', (_actor, event) =>
+            this._handleSliderTouchEvent(event));
 
         for (const signal of ['notify::volume', 'notify::is-muted'])
             this._signalIds.push(this._stream.connect(signal, () => this.sync()));
@@ -190,52 +192,54 @@ class VolumeSliderItem extends PopupMenu.PopupBaseMenuItem {
         this._percentLabel.text = `${percent}%`;
     }
 
-    _handleSliderEvent(event) {
-        switch (event.type()) {
-        case Clutter.EventType.BUTTON_PRESS:
-            if (event.get_button() !== Clutter.BUTTON_PRIMARY)
-                return Clutter.EVENT_PROPAGATE;
+    _startSliderDrag(event) {
+        if (event.get_button() !== Clutter.BUTTON_PRIMARY)
+            return Clutter.EVENT_PROPAGATE;
 
+        this._sliderDragging = true;
+        this._connectStageDrag();
+        this._setSliderFromEvent(event);
+        return Clutter.EVENT_STOP;
+    }
+
+    _handleSliderTouchEvent(event) {
+        switch (event.type()) {
+        case Clutter.EventType.TOUCH_BEGIN:
             this._sliderDragging = true;
-            this._sliderDragGrab?.dismiss();
-            this._sliderDragGrab = global.stage.grab(this._slider);
+            this._connectStageDrag();
             this._setSliderFromEvent(event);
             return Clutter.EVENT_STOP;
 
-        case Clutter.EventType.MOTION:
-            if (!this._sliderDragging)
-                return Clutter.EVENT_PROPAGATE;
+        default:
+            return this._handleStageDragEvent(event);
+        }
+    }
 
+    _connectStageDrag() {
+        if (this._stageDragSignalId)
+            return;
+
+        this._stageDragSignalId = global.stage.connect('captured-event', (_stage, event) =>
+            this._handleStageDragEvent(event));
+    }
+
+    _handleStageDragEvent(event) {
+        if (!this._sliderDragging)
+            return Clutter.EVENT_PROPAGATE;
+
+        switch (event.type()) {
+        case Clutter.EventType.MOTION:
+        case Clutter.EventType.TOUCH_UPDATE:
             this._setSliderFromEvent(event);
             return Clutter.EVENT_STOP;
 
         case Clutter.EventType.BUTTON_RELEASE:
-            if (!this._sliderDragging)
-                return Clutter.EVENT_PROPAGATE;
-
             this._setSliderFromEvent(event);
             this._stopSliderDrag();
             return Clutter.EVENT_STOP;
 
-        case Clutter.EventType.TOUCH_BEGIN:
-            this._sliderDragging = true;
-            this._sliderDragGrab?.dismiss();
-            this._sliderDragGrab = global.stage.grab(this._slider);
-            this._setSliderFromEvent(event);
-            return Clutter.EVENT_STOP;
-
-        case Clutter.EventType.TOUCH_UPDATE:
-            if (!this._sliderDragging)
-                return Clutter.EVENT_PROPAGATE;
-
-            this._setSliderFromEvent(event);
-            return Clutter.EVENT_STOP;
-
         case Clutter.EventType.TOUCH_END:
         case Clutter.EventType.TOUCH_CANCEL:
-            if (!this._sliderDragging)
-                return Clutter.EVENT_PROPAGATE;
-
             this._setSliderFromEvent(event);
             this._stopSliderDrag();
             return Clutter.EVENT_STOP;
@@ -262,8 +266,11 @@ class VolumeSliderItem extends PopupMenu.PopupBaseMenuItem {
     _stopSliderDrag(sync = true) {
         const wasDragging = this._sliderDragging;
         this._sliderDragging = false;
-        this._sliderDragGrab?.dismiss();
-        this._sliderDragGrab = null;
+
+        if (this._stageDragSignalId) {
+            global.stage.disconnect(this._stageDragSignalId);
+            this._stageDragSignalId = 0;
+        }
 
         if (wasDragging && sync)
             this.sync();
@@ -400,6 +407,14 @@ class MixerIndicator extends QuickSettings.SystemIndicator {
         this._indicator.visible = true;
 
         this.quickSettingsItems.push(new MixerMenuToggle());
+    }
+
+    destroy() {
+        for (const item of this.quickSettingsItems)
+            item.destroy();
+        this.quickSettingsItems = [];
+
+        super.destroy();
     }
 });
 
