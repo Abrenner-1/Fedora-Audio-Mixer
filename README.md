@@ -20,9 +20,13 @@ Apps that are open but not currently making sound are shown as idle/waiting. Lin
 
 ## Screenshots
 
-![Fedora Audio Mixer desktop app](screenshots/desktop-app.webp)
+### Quick Settings
 
-![Fedora Audio Mixer Quick Settings tile](screenshots/quick-settings.webp)
+![Fedora Audio Mixer Quick Settings menu with master volume and open programs](screenshots/quick-settings.webp)
+
+### Full Mixer
+
+![Fedora Audio Mixer desktop app with active and idle programs](screenshots/desktop-app.webp)
 
 ## Requirements
 

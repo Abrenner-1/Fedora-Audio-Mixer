@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Render polished README screenshots for Fedora Audio Mixer.
-
-The screenshots are static product previews generated from local HTML/CSS.
-They avoid depending on live GNOME Shell capture, which is restricted on
-Wayland sessions.
-"""
+"""Render current README previews for Fedora Audio Mixer."""
 
 from __future__ import annotations
 
@@ -16,10 +11,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "screenshots"
-WEBP_WIDTHS = {
-    "desktop-app": 1200,
-    "quick-settings": 960,
-}
+CHROME_ICON = Path("/usr/share/icons/hicolor/64x64/apps/google-chrome.png")
+CHATGPT_ICON = Path.home() / ".local/share/icons/hicolor/512x512/apps/codex-desktop.png"
+
+
+def icon_uri(path: Path) -> str:
+    return path.as_uri() if path.exists() else ""
 
 
 BASE_CSS = """
@@ -27,76 +24,69 @@ BASE_CSS = """
 body {
   margin: 0;
   font-family: Cantarell, "Noto Sans", system-ui, sans-serif;
+  font-synthesis: none;
   -webkit-font-smoothing: antialiased;
 }
-.icon {
-  position: relative;
-  display: inline-block;
-  width: 46px;
-  height: 46px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #3584e4, #2ec27e);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.28);
-}
-.icon::before,
-.icon::after {
-  content: "";
-  position: absolute;
-  left: 11px;
-  right: 11px;
-  height: 4px;
-  border-radius: 999px;
-  background: white;
-}
-.icon::before { top: 15px; }
-.icon::after { top: 28px; }
-.knob {
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: white;
-}
-.k1 { left: 24px; top: 12px; }
-.k2 { left: 14px; top: 25px; }
-.speaker-icon {
+.speaker {
   position: relative;
   display: block;
-  width: 18px;
-  height: 16px;
+  width: 20px;
+  height: 18px;
   color: currentColor;
 }
-.speaker-icon::before {
+.speaker::before {
   content: "";
   position: absolute;
   left: 1px;
-  top: 5px;
-  width: 5px;
-  height: 6px;
+  top: 6px;
+  width: 6px;
+  height: 7px;
   border-radius: 1px;
   background: currentColor;
 }
-.speaker-icon::after {
+.speaker::after {
   content: "";
   position: absolute;
-  left: 5px;
-  top: 2px;
+  left: 6px;
+  top: 3px;
   width: 10px;
-  height: 12px;
+  height: 13px;
   background: currentColor;
-  clip-path: polygon(0 36%, 72% 0, 72% 100%, 0 64%);
+  clip-path: polygon(0 36%, 70% 0, 70% 100%, 0 64%);
 }
-.speaker-icon span {
+.wave {
   position: absolute;
   right: 0;
-  top: 4px;
+  top: 5px;
   width: 6px;
-  height: 8px;
+  height: 9px;
   border: 2px solid currentColor;
   border-left: 0;
   border-top-color: transparent;
   border-bottom-color: transparent;
-  border-radius: 0 12px 12px 0;
+  border-radius: 0 10px 10px 0;
+}
+.track {
+  position: relative;
+  height: 5px;
+  border-radius: 5px;
+  background: #d7d8d6;
+}
+.fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #3584e4;
+}
+.thumb {
+  position: absolute;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(0, 0, 0, .12);
+  border-radius: 50%;
+  background: #f8f8f8;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .12);
+  transform: translate(-50%, -50%);
 }
 """
 
@@ -107,164 +97,153 @@ APP_HTML = f"""
 <style>
 {BASE_CSS}
 body {{
-  width: 1440px;
-  height: 940px;
-  background:
-    radial-gradient(circle at 15% 10%, rgba(53,132,228,.14), transparent 28%),
-    linear-gradient(135deg, #f4f6f8, #e3e7eb);
-  color: #202124;
+  width: 1200px;
+  height: 900px;
   display: grid;
   place-items: center;
+  color: #202124;
+  background: #dfe4e8;
 }}
 .window {{
-  width: 1120px;
-  height: 830px;
-  border: 1px solid #bfc6cc;
-  border-radius: 20px;
-  background: #fafafa;
-  box-shadow: 0 26px 60px rgba(24, 28, 33, .18);
+  width: 720px;
+  height: 836px;
   overflow: hidden;
+  border: 1px solid #bfc3c0;
+  border-radius: 12px;
+  background: #f5f6f2;
+  box-shadow: 0 24px 64px rgba(31, 37, 42, .22);
 }}
 .titlebar {{
-  height: 74px;
+  position: relative;
+  height: 54px;
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 0 30px;
-  background: #eceff1;
-  border-bottom: 1px solid #d9dde1;
+  justify-content: center;
+  border-bottom: 1px solid #d4d5d2;
+  background: #f1f1f1;
 }}
 .titlebar h1 {{
   margin: 0;
-  font-size: 23px;
-  font-weight: 800;
-  letter-spacing: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: #777a77;
 }}
 .refresh {{
-  margin-left: auto;
-  color: #5f666d;
-  font-size: 15px;
+  position: absolute;
+  right: 122px;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #d5d5d3;
+  border-radius: 7px;
+  color: #737873;
+  background: #fafafa;
+  font-size: 22px;
 }}
-.content {{
-  padding: 30px 44px;
+.window-buttons {{
+  position: absolute;
+  right: 18px;
+  display: flex;
+  gap: 28px;
+  color: #747874;
+  font-weight: 700;
 }}
+.content {{ padding: 22px 24px 18px; }}
 .section-title {{
-  font-size: 18px;
-  font-weight: 800;
-  margin: 0 0 12px;
+  margin: 0 0 10px;
+  font-size: 16px;
+  font-weight: 700;
 }}
-.select {{
-  height: 56px;
-  border: 1px solid #d2d6d9;
-  border-radius: 10px;
-  background: white;
+.dropdown {{
+  height: 44px;
   display: flex;
   align-items: center;
-  padding: 0 20px;
-  font-size: 17px;
-  margin-bottom: 26px;
+  padding: 0 14px;
+  margin-bottom: 16px;
+  border: 1px solid #d0d2ce;
+  border-radius: 7px;
+  color: #747a76;
+  background: #f9f9f8;
+  font-size: 15px;
 }}
-.select span:last-child {{
-  margin-left: auto;
-  color: #6c7177;
+.dropdown span:last-child {{ margin-left: auto; }}
+.volume-row {{
+  padding: 13px 14px 12px;
+  margin-bottom: 9px;
+  border: 1px solid #d5d7d3;
+  border-radius: 8px;
+  background: #ffffff;
 }}
-.row {{
-  background: white;
-  border: 1px solid #d6dade;
-  border-radius: 10px;
-  padding: 16px 20px 14px;
-  margin-bottom: 12px;
-  box-shadow: 0 1px 0 rgba(255,255,255,.7);
-}}
-.row-head {{
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-}}
-.name {{
-  font-size: 18px;
-  font-weight: 800;
-}}
-.detail {{
-  color: #687078;
-  font-size: 14px;
-  margin-top: 4px;
-}}
+.row-head {{ display: flex; align-items: flex-start; gap: 12px; }}
+.label-box {{ min-width: 0; flex: 1; }}
+.name {{ font-size: 15px; font-weight: 700; }}
+.detail {{ margin-top: 2px; color: #676d68; font-size: 12px; }}
 .percent {{
-  margin-left: auto;
-  color: #384048;
-  font-size: 16px;
+  min-width: 50px;
+  text-align: right;
+  color: #424744;
+  font-size: 15px;
   font-variant-numeric: tabular-nums;
 }}
 .controls {{
-  display: flex;
+  display: grid;
+  grid-template-columns: 38px 1fr;
   align-items: center;
   gap: 14px;
-  margin-top: 12px;
+  margin-top: 10px;
 }}
 .mute {{
-  width: 36px;
-  height: 32px;
-  border: 1px solid #d8dcdf;
-  border-radius: 8px;
+  width: 38px;
+  height: 35px;
   display: grid;
   place-items: center;
-  color: #5f666d;
-  background: #f4f5f5;
-  color: #5f666d;
+  border: 1px solid #d7d8d5;
+  border-radius: 7px;
+  color: #858a86;
+  background: #f8f8f7;
 }}
-.slider {{
-  position: relative;
-  flex: 1;
-  height: 6px;
-  border-radius: 999px;
-  background: #d3d7dc;
-}}
-.fill {{
-  height: 6px;
-  border-radius: 999px;
-  background: #3584e4;
-}}
-.thumb {{
-  position: absolute;
-  top: -8px;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: #f4f5f6;
-  box-shadow: 0 1px 5px rgba(0,0,0,.18);
-}}
-.status {{
-  margin-top: 18px;
-  color: #687078;
-  font-size: 14px;
-}}
+.mute .speaker {{ transform: scale(.76); }}
+.idle {{ color: #808581; }}
+.idle .mute, .idle .track {{ opacity: .42; }}
+.programs-title {{ margin-top: 16px; }}
+.status {{ margin-top: 12px; color: #676d68; font-size: 12px; }}
 </style>
 <main class="window">
   <header class="titlebar">
-    <span class="icon"><span class="knob k1"></span><span class="knob k2"></span></span>
     <h1>Fedora Audio Mixer</h1>
-    <div class="refresh">Refresh</div>
+    <div class="refresh">&#x21bb;</div>
+    <div class="window-buttons"><span>&minus;</span><span>&#x25a1;</span><span>&times;</span></div>
   </header>
   <section class="content">
     <h2 class="section-title">Output</h2>
-    <div class="select"><span>Ryzen HD Audio Controller Analog Stereo (default)</span><span>⌄</span></div>
+    <div class="dropdown"><span>Ryzen HD Audio Controller Analog Stereo (default)</span><span>&#x2304;</span></div>
 
     <h2 class="section-title">Master</h2>
-    <div class="row">
-      <div class="row-head"><div><div class="name">Ryzen HD Audio Controller Analog Stereo</div><div class="detail">Running</div></div><div class="percent">51%</div></div>
-      <div class="controls"><div class="mute"><span class="speaker-icon"><span></span></span></div><div class="slider"><div class="fill" style="width: 51%"></div><div class="thumb" style="left: calc(51% - 11px)"></div></div></div>
-    </div>
+    <article class="volume-row">
+      <div class="row-head">
+        <div class="label-box"><div class="name">Ryzen HD Audio Controller Analog Stereo</div><div class="detail">Running</div></div>
+        <div class="percent">72%</div>
+      </div>
+      <div class="controls"><div class="mute"><span class="speaker"><span class="wave"></span></span></div><div class="track"><div class="fill" style="width:48%"></div><div class="thumb" style="left:48%"></div></div></div>
+    </article>
 
-    <h2 class="section-title" style="margin-top: 28px">Programs</h2>
-    <div class="row">
-      <div class="row-head"><div><div class="name">Discord</div><div class="detail">WEBRTC VoiceEngine / playStream</div></div><div class="percent">100%</div></div>
-      <div class="controls"><div class="mute"><span class="speaker-icon"><span></span></span></div><div class="slider"><div class="fill" style="width: 100%"></div><div class="thumb" style="left: calc(100% - 11px)"></div></div></div>
-    </div>
-    <div class="row">
-      <div class="row-head"><div><div class="name">Chrome</div><div class="detail">Media playback</div></div><div class="percent">82%</div></div>
-      <div class="controls"><div class="mute"><span class="speaker-icon"><span></span></span></div><div class="slider"><div class="fill" style="width: 82%"></div><div class="thumb" style="left: calc(82% - 11px)"></div></div></div>
-    </div>
+    <h2 class="section-title programs-title">Programs</h2>
+    <article class="volume-row">
+      <div class="row-head">
+        <div class="label-box"><div class="name">Google Chrome</div><div class="detail">Google Chrome / Playback</div></div>
+        <div class="percent">102%</div>
+      </div>
+      <div class="controls"><div class="mute"><span class="speaker"><span class="wave"></span></span></div><div class="track"><div class="fill" style="width:68%"></div><div class="thumb" style="left:68%"></div></div></div>
+    </article>
+    <article class="volume-row idle">
+      <div class="row-head"><div class="label-box"><div class="name">ChatGPT</div><div class="detail">Open, waiting for audio</div></div><div class="percent">Idle</div></div>
+      <div class="controls"><div class="mute"><span class="speaker"><span class="wave"></span></span></div><div class="track"><div class="thumb" style="left:0"></div></div></div>
+    </article>
+    <article class="volume-row idle">
+      <div class="row-head"><div class="label-box"><div class="name">Discord</div><div class="detail">Open, waiting for audio</div></div><div class="percent">Idle</div></div>
+      <div class="controls"><div class="mute"><span class="speaker"><span class="wave"></span></span></div><div class="track"><div class="thumb" style="left:0"></div></div></div>
+    </article>
     <div class="status">Connected to PipeWire</div>
   </section>
 </main>
@@ -277,192 +256,105 @@ QUICK_SETTINGS_HTML = f"""
 <style>
 {BASE_CSS}
 body {{
-  width: 1080px;
-  height: 900px;
-  background: linear-gradient(135deg, #101114, #1c1e24);
-  color: #f8f8fb;
+  width: 900px;
+  height: 720px;
   display: grid;
   place-items: center;
+  color: #f4f4f5;
+  background: #17181b;
 }}
 .panel {{
-  width: 610px;
-  border-radius: 42px;
-  background: #34343b;
-  box-shadow: 0 28px 80px rgba(0,0,0,.45);
-  padding: 42px 42px 36px;
+  width: 480px;
+  padding: 18px 20px 16px;
+  border: 1px solid #47484d;
+  border-radius: 27px;
+  background: #3b3b40;
+  box-shadow: 0 22px 58px rgba(0, 0, 0, .48);
 }}
-.top {{
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 32px;
-}}
-.top h1 {{
-  font-size: 22px;
-  margin: 0;
-}}
-.system-row {{
-  display: grid;
-  grid-template-columns: 90px 1fr 22px;
-  align-items: center;
-  gap: 16px;
-  margin: 20px 0;
-}}
-.label {{
-  font-size: 16px;
-  color: #f4f4f6;
-}}
-.track {{
-  position: relative;
-  height: 6px;
-  border-radius: 999px;
-  background: #676972;
-}}
-.track .fill {{
-  height: 6px;
-  border-radius: 999px;
-  background: #3584e4;
-}}
-.track .thumb {{
-  position: absolute;
-  top: -9px;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: #f3f3f5;
-}}
-.chev {{
-  font-size: 24px;
-  color: #e7e7ea;
-}}
-.tiles {{
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  margin-top: 32px;
-}}
-.tile {{
-  min-height: 74px;
-  border-radius: 26px;
-  background: #57575f;
-  padding: 16px 18px;
-  display: grid;
-  grid-template-columns: 24px 1fr 20px;
-  align-items: center;
-  gap: 10px;
-}}
-.tile.active {{
-  background: #3584e4;
-}}
-.dot {{
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: white;
-}}
-.tile-title {{
-  font-size: 17px;
-  font-weight: 800;
-}}
-.tile-sub {{
-  margin-top: 2px;
-  color: #dbeafe;
-  color: #f4f4f6;
-}}
-.mixer {{
-  margin-top: 18px;
-  border-radius: 20px;
-  background: #3f3f47;
-  padding: 24px 26px 26px;
-}}
-.mixer-head {{
-  display: flex;
-  align-items: baseline;
-  margin-bottom: 8px;
-}}
-.mixer-title {{
-  font-size: 19px;
-  font-weight: 800;
-}}
-.open {{
-  margin-left: auto;
-  color: #9bc9ff;
-  font-size: 14px;
-}}
-.subtitle {{
-  color: #c7c8ce;
-  font-size: 14px;
-  margin-bottom: 20px;
-}}
-.mix-row {{
-  margin-top: 18px;
-}}
-.mix-row-head {{
-  display: flex;
-  align-items: center;
-  margin-bottom: 12px;
-}}
-.mix-name {{
-  font-size: 16px;
-  font-weight: 700;
-}}
-.mix-percent {{
-  margin-left: auto;
-  color: #d7d8dd;
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-}}
-.mix-controls {{
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}}
-.mix-controls .track {{
-  flex: 1;
-}}
-.mute {{
-  width: 34px;
-  height: 32px;
-  border-radius: 9px;
-  background: #55565f;
+.header {{ display: flex; align-items: center; gap: 13px; margin-bottom: 18px; }}
+.header-icon {{
+  width: 46px;
+  height: 46px;
   display: grid;
   place-items: center;
-  color: #f4f4f6;
-  font-size: 13px;
+  border-radius: 50%;
+  color: #ffffff;
+  background: #696a6f;
+}}
+.header-icon .speaker {{ transform: scale(1.12); }}
+.header h1 {{ margin: 0; font-size: 22px; line-height: 1.05; font-weight: 700; }}
+.header p {{ margin: 4px 0 0; color: #f0f0f1; font-size: 12px; font-weight: 600; }}
+.master-head {{ display: flex; align-items: center; gap: 9px; min-height: 38px; }}
+.master-head > .speaker {{ transform: scale(.72); }}
+.master-title {{ flex: 1; font-size: 16px; }}
+.entry {{
+  width: 58px;
+  padding: 4px 5px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  text-align: right;
+  color: #dbdbdd;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}}
+.mute {{
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: #b8b9bb;
+  background: #4a4a4f;
+}}
+.mute .speaker {{ transform: scale(.72); }}
+.master-slider {{ margin: 9px 12px 20px 0; }}
+.panel .track {{ height: 4px; background: #606166; }}
+.panel .thumb {{ width: 18px; height: 18px; border: 0; box-shadow: none; }}
+.separator {{ height: 1px; margin: 0 0 6px; background: #55565a; }}
+.app-row {{ display: flex; align-items: center; min-height: 58px; gap: 10px; }}
+.app-icon {{
+  width: 19px;
+  height: 19px;
+  object-fit: contain;
+  border-radius: 4px;
+}}
+.app-copy {{ min-width: 0; flex: 1; }}
+.app-name {{ color: #c6c6c9; font-size: 16px; }}
+.app-detail {{ margin-top: 2px; color: #929398; font-size: 12px; }}
+.idle-label {{ color: #b0b0b4; font-size: 15px; }}
+.footer {{
+  margin-top: 3px;
+  padding: 16px 0 2px;
+  border-top: 1px solid #55565a;
+  font-size: 15px;
 }}
 </style>
 <main class="panel">
-  <div class="top">
-    <span class="icon"><span class="knob k1"></span><span class="knob k2"></span></span>
-    <h1>Quick Settings</h1>
+  <header class="header">
+    <div class="header-icon"><span class="speaker"><span class="wave"></span></span></div>
+    <div><h1>Audio Mixer</h1><p>Master and programs</p></div>
+  </header>
+
+  <div class="master-head">
+    <span class="speaker"><span class="wave"></span></span>
+    <div class="master-title">Master</div>
+    <div class="entry">72%</div>
+    <div class="mute"><span class="speaker"><span class="wave"></span></span></div>
   </div>
+  <div class="track master-slider"><div class="fill" style="width:48%"></div><div class="thumb" style="left:48%"></div></div>
 
-  <div class="system-row"><div class="label">Speaker</div><div class="track"><div class="fill" style="width: 51%"></div><div class="thumb" style="left: calc(51% - 12px)"></div></div><div class="chev">›</div></div>
-  <div class="system-row"><div class="label">Microphone</div><div class="track"><div class="fill" style="width: 86%"></div><div class="thumb" style="left: calc(86% - 12px)"></div></div><div class="chev">›</div></div>
-
-  <section class="tiles">
-    <div class="tile active"><div class="dot"></div><div><div class="tile-title">Wi-Fi</div><div class="tile-sub">Connected</div></div><div class="chev">›</div></div>
-    <div class="tile active"><div class="dot"></div><div><div class="tile-title">Bluetooth</div></div><div class="chev">›</div></div>
-    <div class="tile active"><div class="dot"></div><div><div class="tile-title">Mixer</div><div class="tile-sub">3 programs</div></div><div class="chev">›</div></div>
-    <div class="tile"><div class="dot"></div><div><div class="tile-title">Night Light</div></div><div class="chev">›</div></div>
-  </section>
-
-  <section class="mixer">
-    <div class="mixer-head"><div class="mixer-title">Audio Mixer</div><div class="open">Open full mixer</div></div>
-    <div class="subtitle">Master and active programs</div>
-    <div class="mix-row">
-      <div class="mix-row-head"><div class="mix-name">Master</div><div class="mix-percent">51%</div></div>
-      <div class="mix-controls"><div class="mute"><span class="speaker-icon"><span></span></span></div><div class="track"><div class="fill" style="width: 51%"></div><div class="thumb" style="left: calc(51% - 12px)"></div></div></div>
-    </div>
-    <div class="mix-row">
-      <div class="mix-row-head"><div class="mix-name">Discord</div><div class="mix-percent">100%</div></div>
-      <div class="mix-controls"><div class="mute"><span class="speaker-icon"><span></span></span></div><div class="track"><div class="fill" style="width: 100%"></div><div class="thumb" style="left: calc(100% - 12px)"></div></div></div>
-    </div>
-    <div class="mix-row">
-      <div class="mix-row-head"><div class="mix-name">Chrome</div><div class="mix-percent">82%</div></div>
-      <div class="mix-controls"><div class="mute"><span class="speaker-icon"><span></span></span></div><div class="track"><div class="fill" style="width: 82%"></div><div class="thumb" style="left: calc(82% - 12px)"></div></div></div>
-    </div>
-  </section>
+  <div class="separator"></div>
+  <div class="app-row">
+    <img class="app-icon" src="{icon_uri(CHATGPT_ICON)}" alt="">
+    <div class="app-copy"><div class="app-name">ChatGPT</div><div class="app-detail">Open, waiting for audio</div></div>
+    <div class="idle-label">Idle</div>
+  </div>
+  <div class="app-row">
+    <img class="app-icon" src="{icon_uri(CHROME_ICON)}" alt="">
+    <div class="app-copy"><div class="app-name">Google Chrome</div><div class="app-detail">Open, waiting for audio</div></div>
+    <div class="idle-label">Idle</div>
+  </div>
+  <div class="footer">Open full mixer</div>
 </main>
 """
 
@@ -501,28 +393,25 @@ def render_html(name: str, html: str, size: tuple[int, int]) -> None:
         )
 
 
-def render_webp(name: str) -> None:
+def render_webp(name: str, max_width: int) -> None:
     try:
         from PIL import Image
     except ImportError as exc:
         raise SystemExit("Pillow is required to write WebP screenshots") from exc
 
-    png_path = OUT / f"{name}.png"
-    webp_path = OUT / f"{name}.webp"
-    with Image.open(png_path) as image:
+    with Image.open(OUT / f"{name}.png") as image:
         image = image.convert("RGB")
-        max_width = WEBP_WIDTHS[name]
         if image.width > max_width:
             height = round(image.height * max_width / image.width)
             image = image.resize((max_width, height), Image.Resampling.LANCZOS)
-        image.save(webp_path, "WEBP", quality=92, method=6)
+        image.save(OUT / f"{name}.webp", "WEBP", quality=92, method=6)
 
 
 def main() -> None:
-    render_html("desktop-app", APP_HTML, (1440, 940))
-    render_html("quick-settings", QUICK_SETTINGS_HTML, (1080, 900))
-    render_webp("desktop-app")
-    render_webp("quick-settings")
+    render_html("desktop-app", APP_HTML, (1200, 900))
+    render_html("quick-settings", QUICK_SETTINGS_HTML, (900, 720))
+    render_webp("desktop-app", 1100)
+    render_webp("quick-settings", 900)
     print(f"Rendered screenshots in {OUT}")
 
 
