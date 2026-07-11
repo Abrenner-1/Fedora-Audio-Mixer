@@ -193,7 +193,7 @@ class VolumeSliderItem extends GObject.Object {
         });
 
         this._sliderItem = new PopupMenu.PopupBaseMenuItem({
-            activate: false,
+            reactive: false,
             can_focus: false,
         });
         this._sliderItem.add_style_class_name('fedora-audio-mixer-slider-item');
@@ -205,14 +205,19 @@ class VolumeSliderItem extends GObject.Object {
         });
 
         const sliderBin = new St.Bin({
+            style_class: 'slider-bin',
             child: this._slider,
             reactive: true,
             can_focus: true,
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
         });
-        sliderBin.connect('event', (_bin, event) => this._slider.event(event, false));
         this._sliderItem.add_child(sliderBin);
+
+        const sliderAccessible = this._slider.get_accessible();
+        sliderAccessible.set_parent(sliderBin.get_parent().get_accessible());
+        sliderBin.set_accessible(sliderAccessible);
+        sliderBin.connect('event', (_bin, event) => this._slider.event(event, false));
 
         for (const signal of ['notify::volume', 'notify::is-muted'])
             this._signalIds.push(this._stream.connect(signal, () => this.sync()));
