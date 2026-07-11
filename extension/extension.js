@@ -416,7 +416,6 @@ class MixerMenuToggle extends QuickSettings.QuickMenuToggle {
             'state-changed',
             'stream-added',
             'stream-removed',
-            'stream-changed',
             'default-sink-changed',
         ]) {
             this._controlSignals.push(this._control.connect(signal, () => this.refresh()));
