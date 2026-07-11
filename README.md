@@ -9,6 +9,8 @@ It is built for Fedora systems using PipeWire through PulseAudio compatibility.
 - Master output volume and mute
 - Open program list, including apps that are open but silent
 - Program volume and mute once the app has an audio stream
+- Draggable volume sliders in Quick Settings
+- Clickable percentages for typing an exact volume
 - GNOME Quick Settings **Mixer** tile
 - Full GTK mixer app for a larger view
 - One install script for both interfaces
@@ -51,6 +53,8 @@ On Wayland, log out and back in once if the Quick Settings tile does not appear 
 ## Use
 
 Open **Fedora Audio Mixer** from the app grid, or open GNOME Quick Settings and use the **Mixer** tile.
+
+In Quick Settings, drag a slider to adjust volume continuously. For an exact value, click its percentage, type a number, and press **Enter** or click elsewhere to apply it.
 
 You can also run the app directly from this folder:
 

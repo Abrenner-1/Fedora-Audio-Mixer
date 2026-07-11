@@ -135,6 +135,7 @@ class VolumeSliderItem extends GObject.Object {
         this._isMaster = options.isMaster ?? false;
         this._signalIds = [];
         this._updating = false;
+        this._editingPercent = false;
         this._normalVolume = Math.max(this._control.get_vol_max_norm?.() || 65536, 1);
         this._maxVolume = Math.max(
             this._control.get_vol_max_amplified?.() || 0,
@@ -169,11 +170,38 @@ class VolumeSliderItem extends GObject.Object {
         this._titleLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         header.add_child(this._titleLabel);
 
-        this._percentLabel = new St.Label({
-            style_class: 'fedora-audio-mixer-percent',
+        this._percentEntry = new St.Entry({
+            style_class: 'fedora-audio-mixer-percent-entry',
+            can_focus: true,
+            reactive: true,
             y_align: Clutter.ActorAlign.CENTER,
         });
-        header.add_child(this._percentLabel);
+        this._percentEntry.clutter_text.set_single_line_mode(true);
+        this._percentEntry.clutter_text.connect('key-focus-in', () => {
+            this._editingPercent = true;
+            this._percentEntry.clutter_text.set_selection(0, -1);
+        });
+        this._percentEntry.clutter_text.connect('button-release-event', () => {
+            this._percentEntry.clutter_text.set_selection(0, -1);
+            return Clutter.EVENT_PROPAGATE;
+        });
+        this._percentEntry.clutter_text.connect('activate', () => {
+            this._commitPercent();
+            global.stage.set_key_focus(null);
+        });
+        this._percentEntry.clutter_text.connect('key-focus-out', () => {
+            this._commitPercent();
+        });
+        this._percentEntry.clutter_text.connect('key-press-event', (_text, event) => {
+            if (event.get_key_symbol() !== Clutter.KEY_Escape)
+                return Clutter.EVENT_PROPAGATE;
+
+            this._editingPercent = false;
+            this._updatePercent();
+            global.stage.set_key_focus(null);
+            return Clutter.EVENT_STOP;
+        });
+        header.add_child(this._percentEntry);
 
         this._muteIcon = new St.Icon({
             icon_name: 'audio-volume-high-symbolic',
@@ -260,9 +288,33 @@ class VolumeSliderItem extends GObject.Object {
         this._slider.value = value;
     }
 
+    _commitPercent() {
+        if (!this._editingPercent)
+            return;
+
+        const text = this._percentEntry.get_text().trim().replaceAll('%', '');
+        const requestedPercent = Number(text);
+        this._editingPercent = false;
+
+        if (!Number.isFinite(requestedPercent)) {
+            this._updatePercent();
+            return;
+        }
+
+        const maxPercent = this._maxVolume / this._normalVolume * 100;
+        const percent = clamp(requestedPercent, 0, maxPercent);
+        const volume = Math.round(percent / 100 * this._normalVolume);
+        this._stream.set_volume(volume);
+        this._stream.push_volume();
+        this._updatePercent();
+    }
+
     _updatePercent() {
+        if (this._editingPercent)
+            return;
+
         const percent = Math.round(this._stream.get_volume() / this._normalVolume * 100);
-        this._percentLabel.text = `${percent}%`;
+        this._percentEntry.set_text(`${percent}%`);
     }
 
     destroy() {

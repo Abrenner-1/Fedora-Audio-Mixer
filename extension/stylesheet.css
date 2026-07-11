@@ -35,6 +35,22 @@
   text-align: right;
 }
 
+.fedora-audio-mixer-percent-entry {
+  min-width: 54px;
+  max-width: 54px;
+  padding: 3px 5px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background-color: transparent;
+  text-align: right;
+}
+
+.fedora-audio-mixer-percent-entry:hover,
+.fedora-audio-mixer-percent-entry:focus {
+  border-color: rgba(255, 255, 255, 0.25);
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
 .fedora-audio-mixer-mute-button {
   min-width: 30px;
   min-height: 30px;
