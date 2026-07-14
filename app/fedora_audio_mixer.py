@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 import gi
@@ -24,6 +25,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 MAX_VOLUME = 150
 APP_ID = "dev.local.FedoraAudioMixer"
 APP_NAME = "Fedora Audio Mixer"
+PRESET_PATH = Path.home() / ".config" / "fedora-audio-mixer" / "volume-presets.json"
 
 
 CSS = """
@@ -106,6 +108,80 @@ class AudioState:
     programs: list[OpenProgram]
 
 
+@dataclass(frozen=True)
+class VolumePreset:
+    volume: float = 100
+    muted: bool = False
+
+
+class VolumePresetStore:
+    def __init__(self, path: Path = PRESET_PATH) -> None:
+        self.path = path
+        self._lock = threading.RLock()
+        self._presets: dict[str, VolumePreset] = {}
+        self.reload()
+
+    def reload(self) -> None:
+        with self._lock:
+            self._reload_unlocked()
+
+    def _reload_unlocked(self) -> None:
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            self._presets = {}
+            return
+
+        presets: dict[str, VolumePreset] = {}
+        if isinstance(raw, dict):
+            for key, value in raw.items():
+                if not isinstance(key, str) or not key or not isinstance(value, dict):
+                    continue
+                try:
+                    volume = float(value.get("volume", 100))
+                except (TypeError, ValueError):
+                    continue
+                presets[key] = VolumePreset(
+                    volume=max(0, min(MAX_VOLUME, volume)),
+                    muted=bool(value.get("muted", False)),
+                )
+        self._presets = presets
+
+    def get(self, key: str | None) -> VolumePreset:
+        with self._lock:
+            return self._presets.get(key or "", VolumePreset())
+
+    def find(self, keys: tuple[str, ...] | set[str]) -> tuple[str, VolumePreset] | None:
+        with self._lock:
+            for key in keys:
+                preset = self._presets.get(key)
+                if preset is not None:
+                    return key, preset
+        return None
+
+    def set(self, key: str | None, volume: float, muted: bool) -> None:
+        if not key:
+            return
+
+        with self._lock:
+            self._reload_unlocked()
+            self._presets[key] = VolumePreset(
+                volume=max(0, min(MAX_VOLUME, float(volume))),
+                muted=bool(muted),
+            )
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.path.with_suffix(".tmp")
+            payload = {
+                preset_key: {
+                    "volume": preset.volume,
+                    "muted": preset.muted,
+                }
+                for preset_key, preset in sorted(self._presets.items())
+            }
+            temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            os.replace(temporary, self.path)
+
+
 class PulseAudio:
     def __init__(self) -> None:
         self.pactl = shutil.which("pactl")
@@ -176,7 +252,7 @@ class PulseAudio:
             default_sink_name=default_sink_name,
             sinks=sinks,
             streams=streams,
-            programs=open_programs(streams),
+            programs=open_programs(),
         )
 
     def set_default_sink(self, sink_name: str) -> None:
@@ -389,12 +465,11 @@ def app_should_show(app_info: Gio.AppInfo) -> bool:
         return True
 
 
-def open_programs(streams: list[Stream]) -> list[OpenProgram]:
+def open_programs() -> list[OpenProgram]:
     process_keys = running_process_keys()
     if not process_keys:
         return []
 
-    active_stream_keys = {key for stream in streams for key in stream.keys}
     programs: list[OpenProgram] = []
     seen_matches: set[str] = set()
 
@@ -405,7 +480,7 @@ def open_programs(streams: list[Stream]) -> list[OpenProgram]:
 
         keys = desktop_app_keys(app_info)
         matches = sorted(key for key in keys if key in process_keys)
-        if not matches or any(key in active_stream_keys for key in keys):
+        if not matches:
             continue
 
         identity = matches[0]
@@ -413,7 +488,11 @@ def open_programs(streams: list[Stream]) -> list[OpenProgram]:
             continue
         seen_matches.add(identity)
 
-        primary_key = normalize_program_key(app_id) or identity
+        primary_key = (
+            normalize_program_key(app_info.get_name())
+            or normalize_program_key(app_id)
+            or identity
+        )
         programs.append(
             OpenProgram(
                 key=primary_key,
@@ -543,6 +622,8 @@ class MixerWindow(Gtk.ApplicationWindow):
     def __init__(self, app: Gtk.Application) -> None:
         super().__init__(application=app)
         self.audio = PulseAudio()
+        self.presets = VolumePresetStore()
+        self.preset_applied_streams: set[int] = set()
         self.last_state: AudioState | None = None
         self.refreshing = False
         self.master_row: VolumeRow | None = None
@@ -637,6 +718,7 @@ class MixerWindow(Gtk.ApplicationWindow):
     def _apply_state(self, state: AudioState) -> bool:
         self.refreshing = False
         self.last_state = state
+        self.presets.reload()
         self._sync_outputs(state)
         self._sync_master(state)
         self._sync_streams(state)
@@ -704,44 +786,84 @@ class MixerWindow(Gtk.ApplicationWindow):
 
         self.empty_label.set_visible(not desired_keys)
 
+        current_stream_ids = {stream.index for stream in state.streams}
+        self.preset_applied_streams.intersection_update(current_stream_ids)
+
         for stream in state.streams:
             row_key = f"stream:{stream.index}"
+            preset_match = self.presets.find(stream.keys)
+            matching_program = next(
+                (
+                    program
+                    for program in state.programs
+                    if any(key in stream.keys for key in program.keys)
+                ),
+                None,
+            )
+            preset_key = (
+                preset_match[0]
+                if preset_match
+                else matching_program.key
+                if matching_program
+                else stream.keys[0]
+                if stream.keys
+                else f"stream{stream.index}"
+            )
+
+            display_volume = stream.volume
+            display_muted = stream.muted
+            if stream.index not in self.preset_applied_streams:
+                if preset_match:
+                    preset = preset_match[1]
+                    display_volume = preset.volume
+                    display_muted = preset.muted
+                    self._apply_stream_preset(stream.index, preset)
+                self.preset_applied_streams.add(stream.index)
+
             row = self.stream_rows.get(row_key)
             if row is None:
                 row = VolumeRow(
                     stream.name,
                     stream.detail,
-                    stream.volume,
-                    stream.muted,
-                    lambda volume, stream_index=stream.index: self._set_stream_volume(
-                        stream_index, volume
+                    display_volume,
+                    display_muted,
+                    lambda volume, stream_index=stream.index, key=preset_key: self._set_stream_volume(
+                        stream_index, key, volume
                     ),
-                    lambda muted, stream_index=stream.index: self._set_stream_mute(
-                        stream_index, muted
+                    lambda muted, stream_index=stream.index, key=preset_key: self._set_stream_mute(
+                        stream_index, key, muted
                     ),
                 )
                 self.stream_rows[row_key] = row
                 self.streams_box.append(row)
             else:
-                row.update(stream.name, stream.detail, stream.volume, stream.muted)
+                row.update(stream.name, stream.detail, display_volume, display_muted)
 
         for program in waiting_programs:
             row_key = f"program:{program.key}"
+            preset = self.presets.get(program.key)
+            detail = "Open, applies when audio starts"
             row = self.stream_rows.get(row_key)
             if row is None:
                 row = VolumeRow(
                     program.name,
-                    program.detail,
-                    0,
-                    False,
-                    None,
-                    None,
-                    enabled=False,
+                    detail,
+                    preset.volume,
+                    preset.muted,
+                    lambda volume, key=program.key: self._set_waiting_volume(key, volume),
+                    lambda muted, key=program.key: self._set_waiting_mute(key, muted),
                 )
                 self.stream_rows[row_key] = row
                 self.streams_box.append(row)
             else:
-                row.update(program.name, program.detail, 0, False, enabled=False)
+                row.update(program.name, detail, preset.volume, preset.muted)
+
+    def _apply_stream_preset(self, stream_index: int, preset: VolumePreset) -> None:
+        def command() -> None:
+            self.audio.set_stream_volume(stream_index, preset.volume)
+            self.audio.set_stream_mute(stream_index, preset.muted)
+
+        self._run_audio_command(command)
 
     def _run_audio_command(
         self,
@@ -792,14 +914,28 @@ class MixerWindow(Gtk.ApplicationWindow):
             refresh_after=True,
         )
 
-    def _set_stream_volume(self, stream_index: int, volume: float) -> None:
+    def _set_stream_volume(self, stream_index: int, preset_key: str, volume: float) -> None:
+        row = self.stream_rows.get(f"stream:{stream_index}")
+        muted = row.mute_button.get_active() if row else False
+        self.presets.set(preset_key, volume, muted)
         self._run_audio_command(lambda: self.audio.set_stream_volume(stream_index, volume))
 
-    def _set_stream_mute(self, stream_index: int, muted: bool) -> None:
+    def _set_stream_mute(self, stream_index: int, preset_key: str, muted: bool) -> None:
+        row = self.stream_rows.get(f"stream:{stream_index}")
+        volume = row.scale.get_value() if row else self.presets.get(preset_key).volume
+        self.presets.set(preset_key, volume, muted)
         self._run_audio_command(
             lambda: self.audio.set_stream_mute(stream_index, muted),
             refresh_after=True,
         )
+
+    def _set_waiting_volume(self, preset_key: str, volume: float) -> None:
+        preset = self.presets.get(preset_key)
+        self.presets.set(preset_key, volume, preset.muted)
+
+    def _set_waiting_mute(self, preset_key: str, muted: bool) -> None:
+        preset = self.presets.get(preset_key)
+        self.presets.set(preset_key, preset.volume, muted)
 
 
 class AudioMixerApp(Gtk.Application):
@@ -862,8 +998,14 @@ def print_check() -> int:
     for stream in state.streams:
         muted = " muted" if stream.muted else ""
         print(f"- {stream.name}: {int(round(stream.volume))}%{muted}")
-    print(f"Open programs waiting for audio: {len(state.programs)}")
-    for program in state.programs:
+    active_keys = {key for stream in state.streams for key in stream.keys}
+    waiting_programs = [
+        program
+        for program in state.programs
+        if not any(key in active_keys for key in program.keys)
+    ]
+    print(f"Open programs waiting for audio: {len(waiting_programs)}")
+    for program in waiting_programs:
         print(f"- {program.name}: waiting for audio")
     return 0
 

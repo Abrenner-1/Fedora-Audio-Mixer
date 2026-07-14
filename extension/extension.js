@@ -1,4 +1,5 @@
 import Clutter from 'gi://Clutter';
+import GLib from 'gi://GLib';
 import GioUnix from 'gi://GioUnix';
 import GObject from 'gi://GObject';
 import Gvc from 'gi://Gvc';
@@ -14,6 +15,9 @@ import * as Slider from 'resource:///org/gnome/shell/ui/slider.js';
 
 const APP_DESKTOP_ID = 'dev.local.FedoraAudioMixer.desktop';
 const MAX_AMPLIFIED_FALLBACK = 1.5;
+const MAX_PERCENT = 150;
+const PRESET_DIR = `${GLib.get_user_config_dir()}/fedora-audio-mixer`;
+const PRESET_PATH = `${PRESET_DIR}/volume-presets.json`;
 
 function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
@@ -116,6 +120,19 @@ function streamKeys(stream) {
     return keys;
 }
 
+function appPresetKey(app) {
+    return normalizeProgramKey(app?.get_name?.()) ??
+        normalizeProgramKey(app?.get_id?.());
+}
+
+function streamPresetKey(stream) {
+    const app = appInfoForStream(stream);
+    if (app)
+        return appPresetKey(app);
+
+    return [...streamKeys(stream)][0] ?? null;
+}
+
 function streamFlag(stream, name) {
     const value = stream[name];
 
@@ -123,6 +140,104 @@ function streamFlag(stream, name) {
         return value.call(stream);
 
     return Boolean(value);
+}
+
+class VolumePresetStore {
+    constructor() {
+        this._presets = {};
+        this._saveId = 0;
+        this.reload();
+    }
+
+    reload() {
+        this.flush();
+
+        if (!GLib.file_test(PRESET_PATH, GLib.FileTest.EXISTS)) {
+            this._presets = {};
+            return;
+        }
+
+        try {
+            const [ok, contents] = GLib.file_get_contents(PRESET_PATH);
+            if (!ok)
+                return;
+
+            const parsed = JSON.parse(new TextDecoder().decode(contents));
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+                return;
+
+            const presets = {};
+            for (const [key, value] of Object.entries(parsed)) {
+                const volume = Number(value?.volume);
+                if (!key || !Number.isFinite(volume))
+                    continue;
+                presets[key] = {
+                    volume: clamp(volume, 0, MAX_PERCENT),
+                    muted: Boolean(value?.muted),
+                };
+            }
+            this._presets = presets;
+        } catch (error) {
+            console.error(`Failed to read Fedora Audio Mixer presets: ${error}`);
+        }
+    }
+
+    get(key) {
+        const preset = key ? this._presets[key] : null;
+        return preset
+            ? {...preset}
+            : {volume: 100, muted: false};
+    }
+
+    find(keys) {
+        for (const key of keys) {
+            if (this._presets[key])
+                return {key, preset: this.get(key)};
+        }
+        return null;
+    }
+
+    set(key, volume, muted) {
+        if (!key)
+            return;
+
+        this._presets[key] = {
+            volume: clamp(Number(volume) || 0, 0, MAX_PERCENT),
+            muted: Boolean(muted),
+        };
+
+        if (this._saveId)
+            return;
+
+        this._saveId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 150, () => {
+            this._saveId = 0;
+            this._save();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    flush() {
+        if (!this._saveId)
+            return;
+
+        GLib.source_remove(this._saveId);
+        this._saveId = 0;
+        this._save();
+    }
+
+    _save() {
+        try {
+            GLib.mkdir_with_parents(PRESET_DIR, 0o700);
+            GLib.file_set_contents(PRESET_PATH, JSON.stringify(this._presets, null, 2));
+        } catch (error) {
+            console.error(`Failed to save Fedora Audio Mixer presets: ${error}`);
+        }
+    }
+
+    destroy() {
+        this.flush();
+        this._presets = {};
+    }
 }
 
 const VolumeSliderItem = GObject.registerClass(
@@ -133,6 +248,8 @@ class VolumeSliderItem extends GObject.Object {
         this._stream = stream;
         this._control = control;
         this._isMaster = options.isMaster ?? false;
+        this._presetStore = options.presetStore ?? null;
+        this._presetKey = options.presetKey ?? null;
         this._signalIds = [];
         this._updating = false;
         this._editingPercent = false;
@@ -217,7 +334,9 @@ class VolumeSliderItem extends GObject.Object {
         header.add_child(this._muteButton);
 
         this._muteButton.connect('clicked', () => {
-            this._stream.change_is_muted(!this._stream.get_is_muted());
+            const muted = !this._stream.get_is_muted();
+            this._stream.change_is_muted(muted);
+            this._savePreset(this._stream.get_volume(), muted);
         });
 
         this._sliderItem = new PopupMenu.PopupBaseMenuItem({
@@ -281,6 +400,7 @@ class VolumeSliderItem extends GObject.Object {
         const volume = Math.round(value * this._maxVolume);
         this._stream.set_volume(volume);
         this._stream.push_volume();
+        this._savePreset(volume, this._stream.get_is_muted());
         this._updatePercent();
     }
 
@@ -306,7 +426,16 @@ class VolumeSliderItem extends GObject.Object {
         const volume = Math.round(percent / 100 * this._normalVolume);
         this._stream.set_volume(volume);
         this._stream.push_volume();
+        this._savePreset(volume, this._stream.get_is_muted());
         this._updatePercent();
+    }
+
+    _savePreset(volume, muted) {
+        if (!this._presetStore || !this._presetKey)
+            return;
+
+        const percent = volume / this._normalVolume * 100;
+        this._presetStore.set(this._presetKey, percent, muted);
     }
 
     _updatePercent() {
@@ -327,21 +456,29 @@ class VolumeSliderItem extends GObject.Object {
 
 const WaitingAppItem = GObject.registerClass(
 class WaitingAppItem extends GObject.Object {
-    _init(app) {
+    _init(app, presetStore) {
         super._init();
 
-        this._item = new PopupMenu.PopupBaseMenuItem({
-            reactive: false,
+        this._presetStore = presetStore;
+        this._presetKey = appPresetKey(app);
+        const preset = this._presetStore.get(this._presetKey);
+        this._volume = preset.volume;
+        this._muted = preset.muted;
+        this._updating = false;
+        this._editingPercent = false;
+
+        this._headerItem = new PopupMenu.PopupBaseMenuItem({
+            activate: false,
             can_focus: false,
         });
-        this._item.add_style_class_name('fedora-audio-mixer-item');
-        this._item.add_style_class_name('fedora-audio-mixer-waiting-item');
+        this._headerItem.add_style_class_name('fedora-audio-mixer-item');
+        this._headerItem.add_style_class_name('fedora-audio-mixer-waiting-item');
 
         const row = new St.BoxLayout({
             style_class: 'fedora-audio-mixer-header',
             x_expand: true,
         });
-        this._item.add_child(row);
+        this._headerItem.add_child(row);
 
         let icon = null;
         if (typeof app.create_icon_texture === 'function')
@@ -369,27 +506,153 @@ class WaitingAppItem extends GObject.Object {
         labelBox.add_child(this._titleLabel);
 
         this._detailLabel = new St.Label({
-            text: 'Open, waiting for audio',
+            text: 'Open, applies when audio starts',
             style_class: 'fedora-audio-mixer-waiting-detail',
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._detailLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         labelBox.add_child(this._detailLabel);
 
-        this._statusLabel = new St.Label({
-            text: 'Idle',
-            style_class: 'fedora-audio-mixer-percent fedora-audio-mixer-waiting-status',
+        this._percentEntry = new St.Entry({
+            style_class: 'fedora-audio-mixer-percent-entry',
+            can_focus: true,
+            reactive: true,
             y_align: Clutter.ActorAlign.CENTER,
         });
-        row.add_child(this._statusLabel);
+        this._percentEntry.clutter_text.set_single_line_mode(true);
+        this._percentEntry.clutter_text.connect('key-focus-in', () => {
+            this._editingPercent = true;
+            this._percentEntry.clutter_text.set_selection(0, -1);
+        });
+        this._percentEntry.clutter_text.connect('button-release-event', () => {
+            this._percentEntry.clutter_text.set_selection(0, -1);
+            return Clutter.EVENT_PROPAGATE;
+        });
+        this._percentEntry.clutter_text.connect('activate', () => {
+            this._commitPercent();
+            global.stage.set_key_focus(null);
+        });
+        this._percentEntry.clutter_text.connect('key-focus-out', () => {
+            this._commitPercent();
+        });
+        this._percentEntry.clutter_text.connect('key-press-event', (_text, event) => {
+            if (event.get_key_symbol() !== Clutter.KEY_Escape)
+                return Clutter.EVENT_PROPAGATE;
+
+            this._editingPercent = false;
+            this._updatePercent();
+            global.stage.set_key_focus(null);
+            return Clutter.EVENT_STOP;
+        });
+        row.add_child(this._percentEntry);
+
+        this._muteIcon = new St.Icon({
+            icon_name: 'audio-volume-high-symbolic',
+            style_class: 'popup-menu-icon',
+        });
+        this._muteButton = new St.Button({
+            child: this._muteIcon,
+            can_focus: true,
+            reactive: true,
+            track_hover: true,
+            style_class: 'button fedora-audio-mixer-mute-button',
+        });
+        this._muteButton.connect('clicked', () => {
+            this._muted = !this._muted;
+            this._savePreset();
+            this._syncMuteIcon();
+        });
+        row.add_child(this._muteButton);
+
+        this._sliderItem = new PopupMenu.PopupBaseMenuItem({
+            reactive: false,
+            can_focus: false,
+        });
+        this._sliderItem.add_style_class_name('fedora-audio-mixer-slider-item');
+
+        this._slider = new Slider.Slider(0);
+        this._slider.x_expand = true;
+        this._slider.connect('notify::value', () => {
+            if (this._updating)
+                return;
+
+            this._volume = this._slider.value * MAX_PERCENT;
+            this._savePreset();
+            this._updatePercent();
+        });
+
+        const sliderBin = new St.Bin({
+            style_class: 'slider-bin',
+            child: this._slider,
+            reactive: true,
+            can_focus: true,
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._sliderItem.add_child(sliderBin);
+
+        const sliderAccessible = this._slider.get_accessible();
+        sliderAccessible.set_parent(sliderBin.get_parent().get_accessible());
+        sliderBin.set_accessible(sliderAccessible);
+        sliderBin.connect('event', (_bin, event) => this._slider.event(event, false));
+
+        this._sync();
     }
 
     addToMenu(menu) {
-        menu.addMenuItem(this._item);
+        menu.addMenuItem(this._headerItem);
+        menu.addMenuItem(this._sliderItem);
+    }
+
+    _sync() {
+        this._updating = true;
+        try {
+            this._slider.value = clamp(this._volume / MAX_PERCENT, 0, 1);
+            this._syncMuteIcon();
+            this._updatePercent();
+        } finally {
+            this._updating = false;
+        }
+    }
+
+    _commitPercent() {
+        if (!this._editingPercent)
+            return;
+
+        const text = this._percentEntry.get_text().trim().replaceAll('%', '');
+        const requestedPercent = Number(text);
+        this._editingPercent = false;
+
+        if (!Number.isFinite(requestedPercent)) {
+            this._updatePercent();
+            return;
+        }
+
+        this._volume = clamp(requestedPercent, 0, MAX_PERCENT);
+        this._savePreset();
+        this._sync();
+    }
+
+    _savePreset() {
+        this._presetStore.set(this._presetKey, this._volume, this._muted);
+    }
+
+    _syncMuteIcon() {
+        this._muteIcon.icon_name = this._muted
+            ? 'audio-volume-muted-symbolic'
+            : 'audio-volume-high-symbolic';
+    }
+
+    _updatePercent() {
+        if (this._editingPercent)
+            return;
+
+        this._percentEntry.set_text(`${Math.round(this._volume)}%`);
     }
 
     destroy() {
-        this._item.destroy();
+        this._headerItem.destroy();
+        this._sliderItem.destroy();
     }
 });
 
@@ -404,6 +667,8 @@ class MixerMenuToggle extends QuickSettings.QuickMenuToggle {
 
         this._control = new Gvc.MixerControl({name: 'Fedora Audio Mixer'});
         this._appSystem = Shell.AppSystem.get_default();
+        this._presetStore = new VolumePresetStore();
+        this._presetAppliedStreamIds = new Set();
         this._controlSignals = [];
         this._appSystemSignals = [];
         this._menuSignals = [];
@@ -441,6 +706,7 @@ class MixerMenuToggle extends QuickSettings.QuickMenuToggle {
     }
 
     refresh() {
+        this._presetStore.reload();
         const state = this._control.get_state();
         this._ready = state === Gvc.MixerControlState.READY;
 
@@ -465,6 +731,7 @@ class MixerMenuToggle extends QuickSettings.QuickMenuToggle {
         }
 
         const streams = this._getProgramStreams();
+        this._applyPresetsToNewStreams(streams);
         const waitingApps = this._getWaitingApps(streams);
         const programCount = streams.length + waitingApps.length;
 
@@ -477,10 +744,15 @@ class MixerMenuToggle extends QuickSettings.QuickMenuToggle {
                 reactive: false,
             }));
         } else {
-            for (const stream of streams)
-                this._addTrackedItem(new VolumeSliderItem(stream, this._control));
+            for (const stream of streams) {
+                const match = this._presetStore.find(streamKeys(stream));
+                this._addTrackedItem(new VolumeSliderItem(stream, this._control, {
+                    presetStore: this._presetStore,
+                    presetKey: match?.key ?? streamPresetKey(stream),
+                }));
+            }
             for (const app of waitingApps)
-                this._addTrackedItem(new WaitingAppItem(app));
+                this._addTrackedItem(new WaitingAppItem(app, this._presetStore));
         }
 
         this._addFullMixerShortcut();
@@ -511,6 +783,37 @@ class MixerMenuToggle extends QuickSettings.QuickMenuToggle {
                 return true;
             })
             .sort((a, b) => (a.get_name?.() || '').localeCompare(b.get_name?.() || ''));
+    }
+
+    _applyPresetsToNewStreams(streams) {
+        const currentIds = new Set(streams.map(stream => stream.get_id()));
+        for (const id of this._presetAppliedStreamIds) {
+            if (!currentIds.has(id))
+                this._presetAppliedStreamIds.delete(id);
+        }
+
+        const normalVolume = Math.max(this._control.get_vol_max_norm?.() || 65536, 1);
+        const maxVolume = Math.max(
+            this._control.get_vol_max_amplified?.() || 0,
+            Math.round(normalVolume * MAX_AMPLIFIED_FALLBACK),
+            normalVolume
+        );
+        const maxPercent = maxVolume / normalVolume * 100;
+
+        for (const stream of streams) {
+            const id = stream.get_id();
+            if (this._presetAppliedStreamIds.has(id))
+                continue;
+
+            const match = this._presetStore.find(streamKeys(stream));
+            if (match) {
+                const percent = clamp(match.preset.volume, 0, maxPercent);
+                stream.set_volume(Math.round(percent / 100 * normalVolume));
+                stream.change_is_muted(match.preset.muted);
+                stream.push_volume();
+            }
+            this._presetAppliedStreamIds.add(id);
+        }
     }
 
     _addTrackedItem(item) {
@@ -548,9 +851,12 @@ class MixerMenuToggle extends QuickSettings.QuickMenuToggle {
         this._appSystemSignals = [];
         this._menuSignals = [];
         this._clearMenu();
+        this._presetStore.destroy();
+        this._presetAppliedStreamIds.clear();
         this._control.close();
         this._control = null;
         this._appSystem = null;
+        this._presetStore = null;
         super.destroy();
     }
 });

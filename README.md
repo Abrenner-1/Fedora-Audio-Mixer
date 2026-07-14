@@ -8,7 +8,8 @@ It is built for Fedora systems using PipeWire through PulseAudio compatibility.
 
 - Master output volume and mute
 - Open program list, including apps that are open but silent
-- Program volume and mute once the app has an audio stream
+- Saved volume and mute controls for open, silent programs
+- Automatic preset application when an app starts audio
 - Draggable volume sliders in Quick Settings
 - Clickable percentages for typing an exact volume
 - GNOME Quick Settings **Mixer** tile
@@ -16,7 +17,7 @@ It is built for Fedora systems using PipeWire through PulseAudio compatibility.
 - One install script for both interfaces
 - One uninstall script to remove everything it installs
 
-Apps that are open but not currently making sound are shown as idle/waiting. Linux only exposes a real per-program volume control after an app creates an audio stream, so the slider appears once that program starts playing audio.
+Linux only exposes a live per-program audio stream after an app starts making sound. While an app is silent, Fedora Audio Mixer saves the volume and mute setting you choose, then applies it automatically when that app creates its next audio stream.
 
 ## Screenshots
 
@@ -59,6 +60,8 @@ On Wayland, log out and back in once if the Quick Settings tile does not appear 
 Open **Fedora Audio Mixer** from the app grid, or open GNOME Quick Settings and use the **Mixer** tile.
 
 In Quick Settings, drag a slider to adjust volume continuously. For an exact value, click its percentage, type a number, and press **Enter** or click elsewhere to apply it.
+
+Open programs keep these controls even while silent. Changes made in Quick Settings or the full mixer are shared and used the next time that program starts audio.
 
 You can also run the app directly from this folder:
 

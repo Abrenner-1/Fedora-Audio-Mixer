@@ -204,8 +204,6 @@ body {{
   background: #f8f8f7;
 }}
 .mute .speaker {{ transform: scale(.76); }}
-.idle {{ color: #808581; }}
-.idle .mute, .idle .track {{ opacity: .42; }}
 .programs-title {{ margin-top: 16px; }}
 .status {{ margin-top: 12px; color: #676d68; font-size: 12px; }}
 </style>
@@ -236,13 +234,13 @@ body {{
       </div>
       <div class="controls"><div class="mute"><span class="speaker"><span class="wave"></span></span></div><div class="track"><div class="fill" style="width:68%"></div><div class="thumb" style="left:68%"></div></div></div>
     </article>
-    <article class="volume-row idle">
-      <div class="row-head"><div class="label-box"><div class="name">ChatGPT</div><div class="detail">Open, waiting for audio</div></div><div class="percent">Idle</div></div>
-      <div class="controls"><div class="mute"><span class="speaker"><span class="wave"></span></span></div><div class="track"><div class="thumb" style="left:0"></div></div></div>
+    <article class="volume-row">
+      <div class="row-head"><div class="label-box"><div class="name">ChatGPT</div><div class="detail">Open, applies when audio starts</div></div><div class="percent">40%</div></div>
+      <div class="controls"><div class="mute"><span class="speaker"><span class="wave"></span></span></div><div class="track"><div class="fill" style="width:27%"></div><div class="thumb" style="left:27%"></div></div></div>
     </article>
-    <article class="volume-row idle">
-      <div class="row-head"><div class="label-box"><div class="name">Discord</div><div class="detail">Open, waiting for audio</div></div><div class="percent">Idle</div></div>
-      <div class="controls"><div class="mute"><span class="speaker"><span class="wave"></span></span></div><div class="track"><div class="thumb" style="left:0"></div></div></div>
+    <article class="volume-row">
+      <div class="row-head"><div class="label-box"><div class="name">Discord</div><div class="detail">Open, applies when audio starts</div></div><div class="percent">75%</div></div>
+      <div class="controls"><div class="mute"><span class="speaker"><span class="wave"></span></span></div><div class="track"><div class="fill" style="width:50%"></div><div class="thumb" style="left:50%"></div></div></div>
     </article>
     <div class="status">Connected to PipeWire</div>
   </section>
@@ -257,7 +255,7 @@ QUICK_SETTINGS_HTML = f"""
 {BASE_CSS}
 body {{
   width: 900px;
-  height: 720px;
+  height: 820px;
   display: grid;
   place-items: center;
   color: #f4f4f5;
@@ -311,7 +309,8 @@ body {{
 .panel .track {{ height: 4px; background: #606166; }}
 .panel .thumb {{ width: 18px; height: 18px; border: 0; box-shadow: none; }}
 .separator {{ height: 1px; margin: 0 0 6px; background: #55565a; }}
-.app-row {{ display: flex; align-items: center; min-height: 58px; gap: 10px; }}
+.app-block {{ padding: 6px 0 12px; }}
+.app-row {{ display: flex; align-items: center; min-height: 50px; gap: 10px; }}
 .app-icon {{
   width: 19px;
   height: 19px;
@@ -321,7 +320,7 @@ body {{
 .app-copy {{ min-width: 0; flex: 1; }}
 .app-name {{ color: #c6c6c9; font-size: 16px; }}
 .app-detail {{ margin-top: 2px; color: #929398; font-size: 12px; }}
-.idle-label {{ color: #b0b0b4; font-size: 15px; }}
+.app-slider {{ margin: 4px 12px 0 29px; }}
 .footer {{
   margin-top: 3px;
   padding: 16px 0 2px;
@@ -344,15 +343,23 @@ body {{
   <div class="track master-slider"><div class="fill" style="width:48%"></div><div class="thumb" style="left:48%"></div></div>
 
   <div class="separator"></div>
-  <div class="app-row">
-    <img class="app-icon" src="{icon_uri(CHATGPT_ICON)}" alt="">
-    <div class="app-copy"><div class="app-name">ChatGPT</div><div class="app-detail">Open, waiting for audio</div></div>
-    <div class="idle-label">Idle</div>
+  <div class="app-block">
+    <div class="app-row">
+      <img class="app-icon" src="{icon_uri(CHATGPT_ICON)}" alt="">
+      <div class="app-copy"><div class="app-name">ChatGPT</div><div class="app-detail">Open, applies when audio starts</div></div>
+      <div class="entry">40%</div>
+      <div class="mute"><span class="speaker"><span class="wave"></span></span></div>
+    </div>
+    <div class="track app-slider"><div class="fill" style="width:27%"></div><div class="thumb" style="left:27%"></div></div>
   </div>
-  <div class="app-row">
-    <img class="app-icon" src="{icon_uri(CHROME_ICON)}" alt="">
-    <div class="app-copy"><div class="app-name">Google Chrome</div><div class="app-detail">Open, waiting for audio</div></div>
-    <div class="idle-label">Idle</div>
+  <div class="app-block">
+    <div class="app-row">
+      <img class="app-icon" src="{icon_uri(CHROME_ICON)}" alt="">
+      <div class="app-copy"><div class="app-name">Google Chrome</div><div class="app-detail">Open, applies when audio starts</div></div>
+      <div class="entry">75%</div>
+      <div class="mute"><span class="speaker"><span class="wave"></span></span></div>
+    </div>
+    <div class="track app-slider"><div class="fill" style="width:50%"></div><div class="thumb" style="left:50%"></div></div>
   </div>
   <div class="footer">Open full mixer</div>
 </main>
@@ -409,7 +416,7 @@ def render_webp(name: str, max_width: int) -> None:
 
 def main() -> None:
     render_html("desktop-app", APP_HTML, (1200, 900))
-    render_html("quick-settings", QUICK_SETTINGS_HTML, (900, 720))
+    render_html("quick-settings", QUICK_SETTINGS_HTML, (900, 820))
     render_webp("desktop-app", 1100)
     render_webp("quick-settings", 900)
     print(f"Rendered screenshots in {OUT}")
