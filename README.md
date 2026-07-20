@@ -23,11 +23,11 @@ Linux only exposes a live per-program audio stream after an app starts making so
 
 ### Quick Settings
 
-![Fedora Audio Mixer Quick Settings menu with master volume and open programs](screenshots/quick-settings.webp)
+![Fedora Audio Mixer Quick Settings panel with master, active, and idle program volume controls](screenshots/quick-settings.png)
 
 ### Full Mixer
 
-![Fedora Audio Mixer desktop app with active and idle programs](screenshots/desktop-app.webp)
+![Fedora Audio Mixer desktop app with adjustable active and idle program volume controls](screenshots/desktop-app.png)
 
 ## Requirements
 
